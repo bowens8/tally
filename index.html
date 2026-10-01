@@ -184,6 +184,24 @@ label.f .in{margin-top:4px;color:var(--ink);font-size:15px}
 .toggle:first-of-type{border-top:0}
 .empty{color:var(--muted);padding:6px 0 2px}
 
+.blk{font-size:12px;color:var(--muted);margin-top:2px}
+.badge{display:inline-block;border-radius:999px;padding:1px 8px;font:700 11px var(--display);background:var(--ink);color:#fff;margin-left:6px}
+.cell.exam::after{content:"";position:absolute;top:5px;right:5px;width:7px;height:7px;background:var(--ink);transform:rotate(45deg)}
+.cell.full.exam::after{background:#fff}
+.sumtext{white-space:pre-wrap;font:13px/1.55 var(--body);background:#F2F5F7;border-radius:12px;padding:12px;margin:10px 0 0}
+.chip.exam{background:var(--ink);color:#fff}
+.calstatus{margin:10px 0 0;border-radius:10px;padding:9px 12px;font:600 13px var(--display)}
+.calstatus.ok{background:var(--green-soft);color:#0F6B3A}
+.calstatus.over{background:var(--red-soft);color:#9B2C27}
+.dayrow{display:grid;grid-template-columns:40px 1fr 78px 32px;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.dayrow:first-of-type{border-top:0}
+.dayrow .dn2{font:700 13px var(--display)}
+.dayrow .rest{grid-column:2 / 4;color:var(--muted)}
+.dayrow.cal{grid-template-columns:40px 1fr 32px}
+.bulk{background:#F2F5F7;border-radius:14px;padding:12px;margin-bottom:12px}
+.bulk .addrow{margin-top:8px}
+.presets{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.presets .cb{font-weight:600;padding:4px 9px}
 /* misc */
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:#fff;border-radius:12px;padding:10px 16px;font-size:14px;z-index:20}
 .auth{position:fixed;inset:0;background:var(--bg);display:grid;place-items:center;padding:24px;z-index:30;text-align:center}
@@ -221,10 +239,10 @@ label.f .in{margin-top:4px;color:var(--ink);font-size:15px}
    Leave the placeholders and the app runs in local mode (saves to this browser only).
    ============================================================ */
 const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyA7aTHkVOihN3hoIta5Bgfj20Agkkp0Hkc",
-  authDomain: "tally-8ef17.firebaseapp.com",
-  projectId: "tally-8ef17",
-  appId: "1:593719292205:web:15c79458f76e7f252ea3a4"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT",
+  appId: "YOUR_APP_ID"
 };
 const IS_FB = !FIREBASE_CONFIG.apiKey.startsWith("YOUR_");
 
@@ -246,6 +264,14 @@ const COLORS = ["#3B6FD8", "#7A5AF0", "#12A3A3", "#C23B8A", "#C79A12", "#5B6B7B"
 const CHECK = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 10.5l3.6 3.6 7.4-8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const fmtMin = m => { m = Math.round(m); const h = Math.floor(m / 60); return h ? `${h}h ${m % 60}m` : `${m}m`; };
 const fmtClock = ms => { const s = Math.max(0, Math.floor(ms / 1000)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return h ? `${h}:${pad(m)}:${pad(x)}` : `${m}:${pad(x)}`; };
+const hm = s => { if (!s) return null; const [h, m] = s.split(":").map(Number); return h * 60 + m; };
+const fmtTime = m => { const h = Math.floor(m / 60) % 24, mm = m % 60; return `${((h + 11) % 12) + 1}:${pad(mm)} ${h >= 12 ? "PM" : "AM"}`; };
+const round5 = n => Math.max(5, Math.round(n / 5) * 5);
+const daysUntil = (to, from) => Math.round((parse(to) - parse(from)) / 864e5);
+function examBoost(exam, ds) {
+  if (!exam) return 1; const n = daysUntil(exam, ds);
+  return n < 0 ? 1 : n <= 3 ? 2.5 : n <= 7 ? 2 : n <= 14 ? 1.5 : 1;
+}
 const longDate = ds => parse(ds).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 const shortDate = ds => parse(ds).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
@@ -280,7 +306,7 @@ if (IS_FB) {
       });
       return () => { a(); b(); };
     },
-    saveSettings: p => guard(F.setDoc(F.doc(db, "users", user.uid, "meta", "settings"), clean(p), { merge: true })),
+    saveSettings: p => guard(F.setDoc(F.doc(db, "users", user.uid, "meta", "settings"), clean(p), { mergeFields: Object.keys(p) })),
     saveDay: (ds, data) => guard(F.setDoc(F.doc(db, "users", user.uid, "days", ds), clean(data))),
     email: () => user?.email || ""
   };
@@ -302,19 +328,22 @@ if (IS_FB) {
    ============================================================ */
 const defaultSettings = () => ({
   classes: [], dailyBudget: 180, startDate: todayStr(),
+  studyStart: "16:00", breakMin: 10, examBoost: true, summaryEmail: "",
   study: { enabled: true },
-  workout: { enabled: true, days: [0, 1, 2, 3, 4, 5, 6] },
-  calories: { enabled: true, limit: 2200 },
+  workout: { enabled: true, plan: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map(i => [i, { label: "Workout", minutes: 0 }])) },
+  calories: { enabled: true, limit: 2200, limits: {} },
   timer: null
 });
 const mergeSettings = r => {
   const d = defaultSettings(); if (!r) return d;
-  return { ...d, ...r, study: { ...d.study, ...r.study }, workout: { ...d.workout, ...r.workout },
-    calories: { ...d.calories, ...r.calories }, classes: r.classes || [] };
+  const wk = { ...d.workout, ...r.workout };
+  if (!r.workout?.plan) { wk.plan = {}; (r.workout?.days || [0, 1, 2, 3, 4, 5, 6]).forEach(i => { wk.plan[i] = { label: "Workout", minutes: 0 }; }); }
+  const cal = { ...d.calories, ...r.calories }; cal.limits = cal.limits || {};
+  return { ...d, ...r, study: { ...d.study, ...r.study }, workout: wk, calories: cal, classes: r.classes || [] };
 };
 const S = {
   tab: "today", selDate: todayStr(), cal: { mode: "month", cursor: todayStr() },
-  settings: defaultSettings(), days: {}, loaded: { s: false, d: false }, seeded: false, unsub: null
+  settings: defaultSettings(), bulk: { wk: [], cal: [] }, days: {}, loaded: { s: false, d: false }, seeded: false, unsub: null
 };
 const classById = id => S.settings.classes.find(c => c.id === id);
 
@@ -322,9 +351,22 @@ const classById = id => S.settings.classes.find(c => c.id === id);
    5. Day model + status
    ============================================================ */
 function makeSnap(ds) {
-  const dow = parse(ds).getDay(), st = S.settings, plan = {};
-  if (st.study.enabled) for (const c of st.classes) if (c.days.includes(dow) && c.minutes > 0) plan[c.id] = { name: c.name, color: c.color, goal: c.minutes };
-  return { plan, workout: st.workout.enabled && st.workout.days.includes(dow), cal: st.calories.enabled, limit: st.calories.limit };
+  const dow = parse(ds).getDay(), st = S.settings, plan = {}, list = [];
+  if (st.study.enabled) for (const c of st.classes) if (c.days.includes(dow) && c.minutes > 0) {
+    const b = st.examBoost !== false ? examBoost(c.exam, ds) : 1;
+    list.push({ c, goal: b > 1 ? round5(c.minutes * b) : c.minutes, boosted: b > 1, start: hm(c.start) });
+  }
+  const br = st.breakMin ?? 10, pinned = list.filter(x => x.start != null);
+  let cur = hm(st.studyStart);
+  if (cur != null) for (const x of list.filter(x => x.start == null).sort((a, b) => b.c.priority - a.c.priority)) {
+    for (let moved = true; moved;) {
+      moved = false;
+      for (const q of pinned) if (cur < q.start + q.goal + br && cur + x.goal + br > q.start) { cur = q.start + q.goal + br; moved = true; }
+    }
+    x.start = cur; cur += x.goal + br;
+  }
+  for (const x of list) plan[x.c.id] = { name: x.c.name, color: x.c.color, goal: x.goal, start: x.start ?? null, exam: x.c.exam || "", boosted: x.boosted };
+  return { plan, workout: st.workout.enabled && st.workout.plan?.[dow] ? { ...st.workout.plan[dow] } : false, cal: st.calories.enabled, limit: st.calories.limits?.[dow] ?? st.calories.limit };
 }
 const newDay = ds => ({ date: ds, snap: makeSnap(ds), done: {}, sessions: [], workout: { done: false, note: "" }, cal: { entries: [], ok: false } });
 function dayView(ds) {
@@ -340,7 +382,7 @@ function status(ds) {
   const v = dayView(ds), ids = Object.keys(v.snap.plan);
   const study = ids.length ? ids.every(id => v.done[id]) : null;
   const workout = v.snap.workout ? !!v.workout.done : null;
-  const cal = v.snap.cal ? (!!v.cal.ok && calTotal(v) <= v.snap.limit) : null;
+  const cal = v.snap.cal ? (v.cal.entries.length ? calTotal(v) <= v.snap.limit : !!v.cal.ok) : null;
   const arr = [study, workout, cal].filter(x => x !== null);
   const level = !arr.length ? "na" : arr.every(Boolean) ? "full" : arr.some(Boolean) ? "part" : "none";
   return { study, workout, cal, level, done: arr.filter(Boolean).length, total: arr.length };
@@ -427,6 +469,13 @@ function render() {
   $("#modeNote").textContent = store.mode === "local" ? "Local mode: saved in this browser only" : "";
 }
 
+function blockLine(p, ds) {
+  let t = p.start != null ? `${fmtTime(p.start)} – ${fmtTime(p.start + p.goal)}` : "";
+  if (p.boosted) t += `${t ? " · " : ""}goal raised for exam`;
+  let badge = "";
+  if (p.exam) { const n = daysUntil(p.exam, ds); if (n >= 0) badge = `<span class="badge">Exam ${n === 0 ? "today" : n === 1 ? "tomorrow" : "in " + n + " days"}</span>`; }
+  return t || badge ? `<div class="blk">${t}${badge}</div>` : "";
+}
 /* ---------- Today ---------- */
 function renderToday() {
   const ds = S.selDate, t = todayStr(), isToday = ds === t, v = dayView(ds), st = status(ds), s = S.settings;
@@ -441,7 +490,7 @@ function renderToday() {
   if (!isToday) h += `<p style="text-align:center;margin:10px 0 0"><button class="btn alt sm" data-act="goToday">Back to today</button></p>`;
 
   /* study */
-  const ids = Object.keys(v.snap.plan), t0 = s.timer;
+  const ids = Object.keys(v.snap.plan).sort((a, b) => (v.snap.plan[a].start ?? 1e9) - (v.snap.plan[b].start ?? 1e9)), t0 = s.timer;
   const planMin = ids.reduce((a, id) => a + v.snap.plan[id].goal, 0);
   const planLogged = ids.reduce((a, id) => a + loggedMin(v, id), 0);
   h += `<section class="panel"><div class="panel-head"><h2>Study</h2>${ids.length ? `<span class="tot">${fmtMin(planLogged)} of ${fmtMin(planMin)}</span>` : ""}</div>`;
@@ -462,7 +511,7 @@ function renderToday() {
       const p = v.snap.plan[id], logged = loggedMin(v, id), pct = Math.min(100, logged / p.goal * 100), done = !!v.done[id];
       return `<div class="row ${done ? "done" : ""}">
         <button class="check ${done ? "on" : ""}" data-act="toggleClass" data-id="${id}" aria-pressed="${done}" aria-label="Mark ${esc(p.name)} done">${CHECK}</button>
-        <div class="rowmain"><div class="rname"><i class="dot" style="background:${p.color}"></i>${esc(p.name)}</div>
+        <div class="rowmain"><div class="rname"><i class="dot" style="background:${p.color}"></i>${esc(p.name)}</div>${blockLine(p, ds)}
           <div class="bar"><span style="width:${pct}%;background:${p.color}"></span></div></div>
         <div class="rmeta">${fmtMin(logged)} / ${fmtMin(p.goal)}</div>
         <button class="icon sm" data-act="playClass" data-id="${id}" ${t0 ? "disabled" : ""} aria-label="Start timer for ${esc(p.name)}">▶</button>
@@ -482,16 +531,21 @@ function renderToday() {
   /* workout */
   if (s.workout.enabled) {
     h += `<section class="panel"><div class="panel-head"><h2>Workout</h2></div>`;
+    const wp = v.snap.workout && typeof v.snap.workout === "object" ? v.snap.workout : { label: "Workout", minutes: 0 };
     if (!v.snap.workout) h += `<p class="empty">Rest day.</p>`;
     else h += `<div class="row"><button class="check big ${v.workout.done ? "on" : ""}" data-act="toggleWorkout" aria-pressed="${!!v.workout.done}" aria-label="Mark workout done">${CHECK}</button>
-      <div class="rowmain"><div class="rname">${v.workout.done ? "Workout done" : "Worked out?"}</div></div></div>
+      <div class="rowmain"><div class="rname">${esc(wp.label || "Workout")}</div><div class="blk">${wp.minutes ? wp.minutes + " min goal" : "No time goal"}${v.workout.done ? " · done" : ""}</div></div></div>
       <input class="in" id="wkNote" data-keep data-chg="workoutNote" placeholder="What did you do? (optional)" value="${esc(v.workout.note)}">`;
     h += `</section>`;
   }
 
   /* calories */
   if (v.snap.cal) {
-    const tot = calTotal(v), lim = v.snap.limit, over = tot > lim, pct = Math.min(100, tot / lim * 100);
+    const tot = calTotal(v), lim = v.snap.limit, over = tot > lim, pct = lim ? Math.min(100, tot / lim * 100) : 100;
+    const calFoot = v.cal.entries.length
+      ? `<p class="calstatus ${over ? "over" : "ok"}">${over ? `Over your limit by ${tot - lim} kcal. This goal is not met.` : "Under your limit. This goal counts as met."}</p>`
+      : `<div class="row" style="margin-top:8px"><button class="check big ${v.cal.ok ? "on" : ""}" data-act="toggleCalOk" aria-pressed="${!!v.cal.ok}" aria-label="Stayed under limit">${CHECK}</button>
+        <div class="rowmain"><div class="rname">Stayed under my limit</div><div class="blk">Or add meals above and Tally checks it for you.</div></div></div>`;
     h += `<section class="panel"><div class="panel-head"><h2>Calories</h2><span class="tot">${over ? `${tot - lim} over` : `${lim - tot} left`}</span></div>
       <div class="calnum ${over ? "over" : ""}">${tot} <small>of ${lim} kcal</small></div>
       <div class="bar"><span style="width:${pct}%;background:${over ? "var(--red)" : "var(--green)"}"></span></div>
@@ -499,8 +553,7 @@ function renderToday() {
         <button class="btn sm" data-act="addCal">Add</button></div>
       ${v.cal.entries.map(e => `<div class="sess"><span class="grow" style="width:auto">${esc(e.label || "Entry")}</span><span>${e.kcal}</span>
         <button class="icon sm danger" data-act="delCal" data-id="${e.id}" aria-label="Delete entry">×</button></div>`).join("")}
-      <div class="row" style="margin-top:8px"><button class="check big ${v.cal.ok && !over ? "on" : ""}" data-act="toggleCalOk" ${over ? "disabled" : ""} aria-pressed="${!!v.cal.ok && !over}" aria-label="Stayed under limit">${CHECK}</button>
-        <div class="rowmain"><div class="rname">Stayed under my limit</div></div></div></section>`;
+      ${calFoot}</section>`;
   }
   return h;
 }
@@ -511,8 +564,39 @@ function dayCell(ds, inMonthDay) {
   const future = ds > t, before = ds < s0;
   const cls = future ? "future" : before ? "before" : st.level === "na" ? "" : st.level;
   const pips = (!future && !before) ? ["study", "workout", "cal"].filter(k => st[k] !== null).map(k => `<i class="pip ${st[k] ? "on" : ""}"></i>`).join("") : "";
-  return `<button class="cell ${cls} ${ds === t ? "today" : ""}" data-act="openDay" data-date="${ds}" aria-label="${longDate(ds)}">
+  const ex = examNames(ds);
+  return `<button class="cell ${cls} ${ds === t ? "today" : ""} ${ex ? "exam" : ""}" data-act="openDay" data-date="${ds}" aria-label="${longDate(ds)}${ex ? ", exam: " + esc(ex) : ""}">
     <span class="dn">${inMonthDay}</span>${cls === "full" ? `<span class="ck">${CHECK}</span>` : ""}<span class="pips">${pips}</span></button>`;
+}
+const examNames = ds => S.settings.classes.filter(c => c.exam === ds).map(c => c.name).join(", ");
+const examChip = ds => { const n = examNames(ds); return n ? `<span class="chip exam">Exam: ${esc(n)}</span>` : ""; };
+function weekDates() { const c = S.cal.cursor, st = addDays(c, -parse(c).getDay()); return Array.from({ length: 7 }, (_, i) => addDays(st, i)); }
+function weekSummary(dates) {
+  const t = todayStr(), s0 = startDateStr(), days = dates.filter(d => d <= t && d >= s0);
+  let full = 0, tracked = 0, wk = 0, wkDays = 0, cal = 0, calDays = 0, mins = 0, goal = 0; const per = {};
+  for (const d of days) {
+    const st = status(d), v = dayView(d);
+    if (st.level !== "na") { tracked++; if (st.level === "full") full++; }
+    if (st.workout !== null) { wkDays++; if (st.workout) wk++; }
+    if (st.cal !== null) { calDays++; if (st.cal) cal++; }
+    for (const x of v.sessions) { per[x.classId] = (per[x.classId] || 0) + x.sec / 60; mins += x.sec / 60; }
+    for (const id in v.snap.plan) goal += v.snap.plan[id].goal;
+  }
+  const a = streak("all"), L = [`Tally: ${shortDate(dates[0])} – ${shortDate(dates[6])}`, ""];
+  if (!days.length) return L.concat("Nothing tracked yet for this week.").join("\n");
+  L.push(`Days with all goals met: ${full} of ${tracked}`);
+  if (goal || mins) L.push(`Study: ${fmtMin(mins)} of ${fmtMin(goal)} planned`);
+  for (const [id, m] of Object.entries(per).sort((x, y) => y[1] - x[1])) L.push(`  - ${classById(id)?.name || "Class"}: ${fmtMin(m)}`);
+  if (wkDays) L.push(`Workouts: ${wk} of ${wkDays} planned days`);
+  if (calDays) L.push(`Under calorie limit: ${cal} of ${calDays} days`);
+  L.push(`Current streak: ${a.cur} days (best ${a.best})`);
+  const soon = S.settings.classes.filter(c => c.exam && daysUntil(c.exam, t) >= 0 && daysUntil(c.exam, t) <= 14).sort((x, y) => x.exam < y.exam ? -1 : 1);
+  if (soon.length) { L.push("", "Coming up:"); soon.forEach(c => L.push(`  - ${c.name} exam ${shortDate(c.exam)} (${daysUntil(c.exam, t) === 0 ? "today" : daysUntil(c.exam, t) === 1 ? "tomorrow" : daysUntil(c.exam, t) + " days"})`)); }
+  return L.join("\n");
+}
+function weekPanel(dates) {
+  return `<section class="panel"><div class="panel-head"><h2>Weekly summary</h2></div><pre class="sumtext">${esc(weekSummary(dates))}</pre>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn sm" data-act="emailSummary">Email this to me</button><button class="btn alt sm" data-act="copySummary">Copy</button></div></section>`;
 }
 function monthDates(y, m) { const n = new Date(y, m + 1, 0).getDate(); return Array.from({ length: n }, (_, i) => dstr(new Date(y, m, i + 1))); }
 
@@ -535,9 +619,9 @@ function renderCalendar() {
         st.workout !== null ? `<span class="chip ${st.workout ? "ok" : ""}">Workout</span>` : "",
         st.cal !== null ? `<span class="chip ${st.cal ? "ok" : ""}">Calories</span>` : ""].join("");
       return `<button class="wrow ${!future && st.level === "full" ? "full" : ""}" data-act="openDay" data-date="${ds}">
-        <div class="wd"><b>${DOW[parse(ds).getDay()]}</b><span>${shortDate(ds)}</span></div><div class="wchips">${chips}</div>
+        <div class="wd"><b>${DOW[parse(ds).getDay()]}</b><span>${shortDate(ds)}</span></div><div class="wchips">${chips}${examChip(ds)}</div>
         ${!future && st.level === "full" ? `<span class="wcheck">${CHECK}</span>` : ""}</button>`;
-    }).join("");
+    }).join("") + weekPanel(dates);
   } else if (c.mode === "month") {
     title = `${MONTHS[m]} ${y}`; dates = monthDates(y, m);
     const lead = new Date(y, m, 1).getDay(), cells = [];
@@ -551,7 +635,7 @@ function renderCalendar() {
       const ps = periodStats(row.filter(Boolean).map(x => x.ds));
       g += `<div class="wk ${ps.tracked && ps.full === ps.tracked ? "full" : ""}">${ps.tracked ? `${ps.full}/${ps.tracked}` : ""}</div>`;
     }
-    body = g + `</div><div class="legend"><span><i style="background:var(--green)"></i>All goals</span><span><i style="background:var(--amber-soft);border:1px solid #F1D9A8"></i>Some goals</span><span>Dots: study, workout, calories</span></div>`;
+    body = g + `</div><div class="legend"><span><i style="background:var(--green)"></i>All goals</span><span><i style="background:var(--amber-soft);border:1px solid #F1D9A8"></i>Some goals</span><span>Dots: study, workout, calories</span><span>◆ Exam</span></div>`;
   } else {
     title = String(y); dates = [];
     let g = `<div class="year">`;
@@ -573,6 +657,35 @@ function renderCalendar() {
 }
 
 /* ---------- Setup ---------- */
+const bulkChips = kind => `<div class="chips">${DOW.map((n, i) => `<button class="cb ${S.bulk[kind].includes(i) ? "on" : ""}" data-act="bulkDay" data-kind="${kind}" data-d="${i}" aria-pressed="${S.bulk[kind].includes(i)}">${n.slice(0, 2)}</button>`).join("")}</div>
+  <div class="presets">${[["weekdays", "Weekdays"], ["weekend", "Weekend"], ["all", "Every day"], ["none", "Clear"]].map(([p, n]) => `<button class="cb" data-act="bulkPreset" data-kind="${kind}" data-p="${p}">${n}</button>`).join("")}</div>`;
+function workoutPanel() {
+  const plan = S.settings.workout.plan || {};
+  return `<section class="panel"><div class="panel-head"><h2>Workout plan</h2></div>
+    <div class="bulk"><b style="font:700 14px var(--display)">Set several days at once</b>
+      <div class="addrow"><input class="in" id="bulkWkLabel" data-keep placeholder="Goal, e.g. Upper body"><input class="in" id="bulkWkMin" data-keep inputmode="numeric" placeholder="min"></div>
+      ${bulkChips("wk")}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn sm" data-act="bulkWkApply">Apply to selected days</button><button class="btn alt sm" data-act="bulkWkRest">Make selected days rest days</button></div></div>
+    ${DOW.map((n, i) => plan[i] ? `<div class="dayrow"><span class="dn2">${n}</span>
+        <input class="in" value="${esc(plan[i].label)}" data-chg="wkLabel" data-d="${i}" aria-label="${n} workout goal">
+        <input class="in" type="number" min="0" step="5" value="${plan[i].minutes || ""}" placeholder="min" data-chg="wkMin" data-d="${i}" aria-label="${n} minutes">
+        <button class="icon sm danger" data-act="wkRest" data-d="${i}" aria-label="Make ${n} a rest day">×</button></div>`
+      : `<div class="dayrow"><span class="dn2">${n}</span><span class="rest">Rest day</span><button class="btn alt sm" data-act="wkAdd" data-d="${i}" style="grid-column:4;padding:6px 10px">Add</button></div>`).join("")}
+  </section>`;
+}
+function caloriePanel() {
+  const c = S.settings.calories, lim = c.limits || {};
+  return `<section class="panel"><div class="panel-head"><h2>Calorie limits</h2></div>
+    <label class="f">Default daily limit (kcal)<input class="in" type="number" min="0" step="50" value="${c.limit}" data-chg="calLimit"></label>
+    <div class="bulk" style="margin-top:12px"><b style="font:700 14px var(--display)">Set a different limit for several days</b>
+      <div class="addrow"><input class="in" id="bulkCal" data-keep inputmode="numeric" placeholder="kcal"></div>
+      ${bulkChips("cal")}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn sm" data-act="bulkCalApply">Apply to selected days</button><button class="btn alt sm" data-act="bulkCalClear">Back to default</button></div></div>
+    ${DOW.map((n, i) => `<div class="dayrow cal"><span class="dn2">${n}</span>
+      <input class="in" type="number" min="0" step="50" value="${lim[i] ?? ""}" placeholder="${c.limit} (default)" data-chg="calDay" data-d="${i}" aria-label="${n} calorie limit">
+      ${lim[i] != null ? `<button class="icon sm danger" data-act="calReset" data-d="${i}" aria-label="Reset ${n} to default">×</button>` : "<span></span>"}</div>`).join("")}
+  </section>`;
+}
 function renderSetup() {
   const s = S.settings;
   const dayChips = (arr, act, extra = "") => DOW.map((n, i) => `<button class="cb ${arr.includes(i) ? "on" : ""}" data-act="${act}" data-d="${i}" ${extra} aria-pressed="${arr.includes(i)}">${n.slice(0, 2)}</button>`).join("");
@@ -584,21 +697,29 @@ function renderSetup() {
         <input type="color" value="${c.color}" data-chg="clsColor" data-id="${c.id}" aria-label="Class color">
         <button class="icon sm danger" data-act="delClass" data-id="${c.id}" aria-label="Delete ${esc(c.name)}">×</button></div>
       <div class="cls-grid"><label class="f">Minutes per study day<input class="in" type="number" min="0" step="5" value="${c.minutes}" data-chg="clsMin" data-id="${c.id}"></label>
-        <label class="f">Priority<select class="in" data-chg="clsPri" data-id="${c.id}">${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${n === c.priority ? "selected" : ""}>${n}${n === 1 ? " (low)" : n === 5 ? " (high)" : ""}</option>`).join("")}</select></label></div>
+        <label class="f">Priority<select class="in" data-chg="clsPri" data-id="${c.id}">${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${n === c.priority ? "selected" : ""}>${n}${n === 1 ? " (low)" : n === 5 ? " (high)" : ""}</option>`).join("")}</select></label>
+        <label class="f">Start time (optional)<input class="in" type="time" value="${esc(c.start || "")}" data-chg="clsStart" data-id="${c.id}"></label>
+        <label class="f">Exam date (optional)<input class="in" type="date" value="${esc(c.exam || "")}" data-chg="clsExam" data-id="${c.id}"></label></div>
       <div class="chips">${dayChips(c.days, "toggleClsDay", `data-id="${c.id}"`)}</div></div>`).join("");
   h += s.classes.length ? `<div class="split"><label class="f">Daily study budget (minutes)<input class="in" id="budget" type="number" min="0" step="15" value="${s.dailyBudget}" data-chg="budget" data-keep></label>
       <button class="btn alt" data-act="autoSplit">Split by priority</button></div>
       <p class="muted" style="font-size:13px;margin:8px 0 0">Splits the budget across all classes by priority, in 5-minute steps. Fine-tune each class afterward.</p>` : "";
   h += `</section>
+  <section class="panel"><div class="panel-head"><h2>Schedule</h2></div>
+    <div class="cls-grid" style="margin-top:0"><label class="f">Study starts at<input class="in" type="time" value="${esc(s.studyStart || "")}" data-chg="studyStart"></label>
+      <label class="f">Break between classes (min)<input class="in" type="number" min="0" step="5" value="${s.breakMin ?? 10}" data-chg="breakMin"></label></div>
+    <p class="muted" style="font-size:13px;margin:8px 0 0">Classes without their own start time are stacked in priority order from this time. Classes with a start time stay where you put them. Clear the time to hide the schedule.</p>
+    <div class="toggle" style="margin-top:8px"><span>Raise goals before exams</span><button class="cb ${s.examBoost !== false ? "on" : ""}" data-act="toggleExamBoost">${s.examBoost !== false ? "On" : "Off"}</button></div>
+    <p class="muted" style="font-size:13px;margin:0">Daily minutes grow 1.5× within 14 days of an exam, 2× within 7 days and 2.5× within 3 days.</p></section>
   <section class="panel"><div class="panel-head"><h2>Goals</h2></div>
     <div class="toggle"><span>Study goals</span><button class="cb ${s.study.enabled ? "on" : ""}" data-act="toggleGoal" data-g="study">${s.study.enabled ? "On" : "Off"}</button></div>
-    <div class="toggle" style="display:block"><div style="display:flex;justify-content:space-between;align-items:center"><span>Workouts</span><button class="cb ${s.workout.enabled ? "on" : ""}" data-act="toggleGoal" data-g="workout">${s.workout.enabled ? "On" : "Off"}</button></div>
-      ${s.workout.enabled ? `<div class="chips">${dayChips(s.workout.days, "toggleWkDay")}</div><p class="muted" style="font-size:13px;margin:8px 0 0">Unselected days count as rest days.</p>` : ""}</div>
-    <div class="toggle" style="display:block"><div style="display:flex;justify-content:space-between;align-items:center"><span>Calorie limit</span><button class="cb ${s.calories.enabled ? "on" : ""}" data-act="toggleGoal" data-g="calories">${s.calories.enabled ? "On" : "Off"}</button></div>
-      ${s.calories.enabled ? `<label class="f" style="margin-top:8px">Daily limit (kcal)<input class="in" type="number" min="0" step="50" value="${s.calories.limit}" data-chg="calLimit"></label>` : ""}</div>
+    <div class="toggle"><span>Workouts</span><button class="cb ${s.workout.enabled ? "on" : ""}" data-act="toggleGoal" data-g="workout">${s.workout.enabled ? "On" : "Off"}</button></div>
+    <div class="toggle"><span>Calorie limit</span><button class="cb ${s.calories.enabled ? "on" : ""}" data-act="toggleGoal" data-g="calories">${s.calories.enabled ? "On" : "Off"}</button></div>
   </section>
+  ${s.workout.enabled ? workoutPanel() : ""}${s.calories.enabled ? caloriePanel() : ""}
   <section class="panel"><div class="panel-head"><h2>Account and data</h2></div>
     <p class="muted" style="margin:0 0 10px">${store.mode === "firebase" ? `Signed in as ${esc(store.email())}. Your data syncs across devices.` : "Local mode: data lives only in this browser. Add your Firebase config in index.html to sync across devices."}</p>
+    <label class="f" style="margin-bottom:10px">Send weekly summaries to<input class="in" type="email" value="${esc(s.summaryEmail || "")}" data-chg="summaryEmail" placeholder="you@example.com"></label>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn alt sm" data-act="exportData">Export JSON</button>${store.mode === "firebase" ? `<button class="btn alt sm" data-act="signOut">Sign out</button>` : ""}</div></section>`;
   return h;
 }
@@ -647,7 +768,7 @@ const ACT = {
     const name = $("#newClass").value.trim(); if (!name) { toast("Type a class name first"); return; }
     $("#newClass").value = "";
     const used = S.settings.classes.map(c => c.color), color = COLORS.find(c => !used.includes(c)) || COLORS[S.settings.classes.length % COLORS.length];
-    commitSettings({ classes: [...S.settings.classes, { id: uid(), name, color, minutes: 45, priority: 3, days: [1, 2, 3, 4, 5] }] });
+    commitSettings({ classes: [...S.settings.classes, { id: uid(), name, color, minutes: 45, priority: 3, days: [1, 2, 3, 4, 5], start: "", exam: "" }] });
   },
   delClass: el => {
     const c = classById(el.dataset.id); if (!c || !confirm(`Delete ${c.name}? Past study logs stay in your history.`)) return;
@@ -661,15 +782,37 @@ const ACT = {
     commitSettings({ classes: cl, dailyBudget: budget }); toast("Study plan updated");
   },
   toggleGoal: el => { const g = el.dataset.g; commitSettings({ [g]: { ...S.settings[g], enabled: !S.settings[g].enabled } }); },
-  toggleWkDay: el => {
-    const d = +el.dataset.d, days = S.settings.workout.days;
-    commitSettings({ workout: { ...S.settings.workout, days: days.includes(d) ? days.filter(x => x !== d) : [...days, d].sort() } });
+  bulkDay: el => { const k = el.dataset.kind, d = +el.dataset.d, a = S.bulk[k]; S.bulk[k] = a.includes(d) ? a.filter(x => x !== d) : [...a, d].sort(); render(); },
+  bulkPreset: el => { S.bulk[el.dataset.kind] = { weekdays: [1, 2, 3, 4, 5], weekend: [0, 6], all: [0, 1, 2, 3, 4, 5, 6], none: [] }[el.dataset.p]; render(); },
+  bulkWkApply: () => {
+    const days = S.bulk.wk; if (!days.length) { toast("Pick at least one day first"); return; }
+    const label = $("#bulkWkLabel").value.trim() || "Workout", minutes = Math.max(0, Math.round(+$("#bulkWkMin").value || 0));
+    editWorkout(w => days.forEach(d => { w.plan[d] = { label, minutes }; })); toast(`Workout set for ${days.length} day${days.length === 1 ? "" : "s"}`);
+  },
+  bulkWkRest: () => { const days = S.bulk.wk; if (!days.length) { toast("Pick at least one day first"); return; } editWorkout(w => days.forEach(d => { delete w.plan[d]; })); },
+  wkAdd: el => editWorkout(w => { w.plan[el.dataset.d] = { label: "Workout", minutes: 0 }; }),
+  wkRest: el => editWorkout(w => { delete w.plan[el.dataset.d]; }),
+  bulkCalApply: () => {
+    const days = S.bulk.cal, k = Math.round(+$("#bulkCal").value);
+    if (!days.length) { toast("Pick at least one day first"); return; }
+    if (!(k >= 0) || !$("#bulkCal").value) { toast("Enter a calorie limit"); return; }
+    editCal(c => days.forEach(d => { c.limits[d] = k; })); toast(`Limit set for ${days.length} day${days.length === 1 ? "" : "s"}`);
+  },
+  bulkCalClear: () => { const days = S.bulk.cal; if (!days.length) { toast("Pick at least one day first"); return; } editCal(c => days.forEach(d => { delete c.limits[d]; })); },
+  calReset: el => editCal(c => { delete c.limits[el.dataset.d]; }),
+  toggleExamBoost: () => commitSettings({ examBoost: S.settings.examBoost === false }),
+  copySummary: async () => { try { await navigator.clipboard.writeText(weekSummary(weekDates())); toast("Summary copied"); } catch { toast("Couldn't copy. Select the text instead."); } },
+  emailSummary: () => {
+    const d = weekDates(), to = encodeURIComponent(S.settings.summaryEmail || "");
+    location.href = `mailto:${to}?subject=${encodeURIComponent(`Tally weekly summary, ${shortDate(d[0])} – ${shortDate(d[6])}`)}&body=${encodeURIComponent(weekSummary(d))}`;
   },
   exportData: () => {
     const blob = new Blob([JSON.stringify({ settings: S.settings, days: S.days }, null, 2)], { type: "application/json" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `tally-${todayStr()}.json`; a.click(); URL.revokeObjectURL(a.href);
   }
 };
+function editWorkout(fn) { const w = structuredClone(S.settings.workout); w.plan = w.plan || {}; fn(w); commitSettings({ workout: w }); }
+function editCal(fn) { const c = structuredClone(S.settings.calories); c.limits = c.limits || {}; fn(c); commitSettings({ calories: c }); }
 function editClass(id, fn) { const cl = structuredClone(S.settings.classes), c = cl.find(x => x.id === id); if (!c) return; fn(c); commitSettings({ classes: cl }); }
 function calStep(n) {
   const c = S.cal, d = parse(c.cursor);
@@ -683,8 +826,16 @@ const CHG = {
   clsName: el => editClass(el.dataset.id, c => { c.name = el.value.trim() || c.name; }),
   clsColor: el => editClass(el.dataset.id, c => { c.color = el.value; }),
   clsMin: el => editClass(el.dataset.id, c => { c.minutes = Math.max(0, Math.round(+el.value || 0)); }),
+  clsStart: el => editClass(el.dataset.id, c => { c.start = el.value; }),
+  clsExam: el => editClass(el.dataset.id, c => { c.exam = el.value; }),
+  studyStart: el => commitSettings({ studyStart: el.value }),
+  breakMin: el => commitSettings({ breakMin: Math.max(0, Math.round(+el.value || 0)) }),
+  summaryEmail: el => { S.settings.summaryEmail = el.value.trim(); store.saveSettings({ summaryEmail: S.settings.summaryEmail }); },
   clsPri: el => editClass(el.dataset.id, c => { c.priority = +el.value; }),
   budget: el => { S.settings.dailyBudget = +el.value || 0; store.saveSettings({ dailyBudget: S.settings.dailyBudget }); },
+  wkLabel: el => editWorkout(w => { if (w.plan[el.dataset.d]) w.plan[el.dataset.d].label = el.value.trim() || "Workout"; }),
+  wkMin: el => editWorkout(w => { if (w.plan[el.dataset.d]) w.plan[el.dataset.d].minutes = Math.max(0, Math.round(+el.value || 0)); }),
+  calDay: el => editCal(c => { if (el.value === "") delete c.limits[el.dataset.d]; else c.limits[el.dataset.d] = Math.max(0, Math.round(+el.value || 0)); }),
   calLimit: el => commitSettings({ calories: { ...S.settings.calories, limit: Math.max(0, Math.round(+el.value || 0)) } })
 };
 document.addEventListener("click", e => { const el = e.target.closest("[data-act]"); if (el && !el.disabled) ACT[el.dataset.act]?.(el, e); });
