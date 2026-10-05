@@ -307,8 +307,6 @@ nav.tabs button{max-width:none;padding:11px 2px;font-size:13px}
 h1{overflow-wrap:anywhere}
 /* ---- v6: workouts on the schedule, vacations ---- */
 .tl-b.wk b::before{content:"";}
-.exline{margin:10px 0 0;text-align:center;font-size:14px;color:var(--ink)}
-.exline b{font-family:var(--display)}
 .vacnote{margin:10px 0 0;text-align:center;font-size:13px;color:#5E6B77;background:#D3DAE0;border-radius:10px;padding:7px 10px}
 .cell.vac::before{content:"✈";position:absolute;right:3px;bottom:1px;font-size:10px;line-height:1;z-index:3;color:#33414E}
 .cell.full.vac::before{color:#fff}
@@ -317,6 +315,8 @@ h1{overflow-wrap:anywhere}
 .wkrow.restrow{grid-template-columns:40px 1fr auto}
 .wkrow2{grid-column:2 / 4;display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .wkrow .dn2{font:700 13px var(--display)}
+.row.study .rname{flex-wrap:wrap;gap:3px 8px}
+.row.study .rname .badge{margin-left:0;flex:none}
 </style>
 </head>
 <body>
@@ -660,12 +660,15 @@ function render() {
 }
 
 /* ---------- Today ---------- */
-function blockLine(p, ds) {
+function blockLine(p) {
   let t = p.start != null ? `${fmtTime(p.start)} – ${fmtTime(p.start + p.goal)}` : "";
   if (p.adjusted) t += `${t ? " · " : ""}goal adjusted for exam`;
-  let badge = "";
-  if (p.exam) { const n = daysUntil(p.exam.date, ds); if (n >= 0 && n <= 21) badge = `<span class="badge">${esc(p.exam.name)} ${n === 0 ? "today" : n === 1 ? "tomorrow" : "in " + n + " days"}</span>`; }
-  return t || badge ? `<div class="blk">${t}${badge}</div>` : "";
+  return t ? `<div class="blk">${t}</div>` : "";
+}
+function examBadge(p, ds) {
+  if (!p.exam) return "";
+  const n = daysUntil(p.exam.date, ds);
+  return n >= 0 ? `<span class="badge">Exam ${n === 0 ? "today" : n === 1 ? "tomorrow" : "in " + n + " days"}</span>` : "";
 }
 
 function timerCard(v) {
@@ -747,7 +750,7 @@ function studyPanel(ds, v) {
     const p = plan[id], logged = loggedMin(v, id), pct = Math.min(100, logged / p.goal * 100), done = !!v.done[id];
     return `<div class="row study ${done ? "done" : ""}">
       <button class="check ${done ? "on" : ""}" data-act="toggleClass" data-id="${id}" ${isFuture() ? "disabled" : ""} aria-pressed="${done}" aria-label="Mark ${esc(p.name)} done">${CHECK}</button>
-      <div class="rowmain"><div class="rname"><i class="dot" style="background:${p.color}"></i>${esc(p.name)}</div>${blockLine(p, ds)}
+      <div class="rowmain"><div class="rname"><i class="dot" style="background:${p.color}"></i><span>${esc(p.name)}</span>${examBadge(p, ds)}</div>${blockLine(p)}
         <div class="bar"><span style="width:${pct}%;background:${p.color}"></span></div>
         <div class="rmeta">${fmtMin(logged)} / ${fmtMin(p.goal)}${logged > p.goal ? ` <b style="color:var(--green)">· +${fmtMin(logged - p.goal)} over</b>` : ""}</div></div>
       <button class="icon sm" data-act="playClass" data-id="${id}" ${t0 || isFuture() ? "disabled" : ""} aria-label="Start timer for ${esc(p.name)}">▶</button>
@@ -820,12 +823,6 @@ function studyDaysLeft(ex, from) {
   }
   return n;
 }
-function nextExamLine(ds) {
-  const ex = S.settings.exams.filter(e => e.date >= ds).sort((a, b) => a.date < b.date ? -1 : 1)[0];
-  if (!ex) return "";
-  const n = studyDaysLeft(ex, ds);
-  return `<p class="exline"><b>Next exam:</b> ${esc(ex.name)} on ${wkdayName(ex.date)} (${n} study day${n === 1 ? "" : "s"})</p>`;
-}
 function renderToday() {
   const ds = S.selDate, t = todayStr(), isToday = ds === t, v = dayView(ds), st = status(ds);
   const future = ds > t, special = isToday || ds === addDays(t, -1) || ds === addDays(t, 1);
@@ -838,7 +835,7 @@ function renderToday() {
     <div class="mid" style="text-align:center"><h1>${title}</h1><p class="sub">${subtitle}</p></div>
     <button class="icon" data-act="nextDay" aria-label="Next day">›</button></div>
     <div class="banner ${st.level}"><span>${msg}</span><small>${future ? "Planning ahead" : `${sAll.cur} day streak · best ${sAll.best}`}</small></div>
-    ${vacNote(v)}${nextExamLine(ds)}
+    ${vacNote(v)}
     <p class="center">${isToday ? "" : `<button class="btn alt sm" data-act="goToday">Back to today</button>`}
       <input type="date" class="in" id="jumpDate" data-chg="jumpDate" value="${ds}" aria-label="Jump to a date" style="width:auto;margin-left:6px;padding:6px 8px;display:inline-block"></p>
     ${future ? `<section class="panel"><p class="muted" style="margin:0">Planning ahead. You can edit this day or use your weekly rest-day move. Check-offs, the timer and meals unlock on the day.</p></section>` : timerCard(v)}${schedulePanel(ds, v)}${studyPanel(ds, v)}${S.settings.workout.enabled ? workoutPanel(v) : ""}${caloriePanel(v)}`;
