@@ -519,7 +519,7 @@ function dayView(ds) {
   if (vac) snap = { ...snap, plan: vac.absent.study ? {} : snap.plan, workout: vac.absent.workout ? false : snap.workout, cal: vac.absent.cal ? false : snap.cal };
   return {
     snap, vac, moved: d?.moved || null, extra: d?.extra || null, done: d?.done || {}, sessions: d?.sessions || [],
-    workout: d?.workout || { done: false, note: "" }, cal: d?.cal || { entries: [], ok: false }, custom: !!(d?.custom || d?.customWk)
+    workout: d?.workout || { done: false, note: "" }, cal: d?.cal || { entries: [], ok: false }, custom: !!(d?.custom || d?.customWk), off: d?.off === true
   };
 }
 /* One rest day per week (Sun-Sat): the workout moves to a later day that week. */
@@ -535,7 +535,9 @@ function workoutItems(v) {
 const calTotal = v => v.cal.entries.reduce((a, e) => a + e.kcal, 0);
 const loggedMin = (v, id) => v.sessions.filter(s => s.classId === id).reduce((a, s) => a + s.sec, 0) / 60;
 function status(ds) {
-  const v = dayView(ds), ids = Object.keys(v.snap.plan), wi = workoutItems(v);
+  const v = dayView(ds);
+  if (v.off) return { study: null, workout: null, cal: null, level: "na", done: 0, total: 0 };
+  const ids = Object.keys(v.snap.plan), wi = workoutItems(v);
   const study = !ids.length ? null : ids.every(id => v.done[id]);
   const workout = wi.length ? wi.every(i => i.done) : null;
   const cal = !v.snap.cal ? null : (v.cal.entries.length ? calTotal(v) <= v.snap.limit : !!v.cal.ok);
@@ -809,6 +811,11 @@ function caloriePanel(v) {
       <button class="icon sm danger" data-act="delCal" data-id="${e.id}" aria-label="Delete entry">×</button></div>`).join("")}${foot}</section>`;
 }
 
+function offPanel() {
+  return `<section class="panel"><h2 style="font-size:16px">Goals are off for this day</h2>
+    <p class="muted" style="margin:8px 0 12px">This day shows gray on the calendar and doesn't count for or against your streaks. Anything you logged on it is kept.</p>
+    <button class="btn sm" data-act="toggleOff">Turn goals back on</button></section>`;
+}
 function vacNote(v) {
   if (!v.vac) return "";
   const a = v.vac.absent, names = [a.study && "study", a.workout && "workouts", a.cal && "calories"].filter(Boolean);
@@ -829,15 +836,15 @@ function renderToday() {
   const title = isToday ? "Today" : ds === addDays(t, -1) ? "Yesterday" : ds === addDays(t, 1) ? "Tomorrow" : parse(ds).toLocaleDateString("en-US", { weekday: "long" });
   const subtitle = special ? longDate(ds) : parse(ds).toLocaleDateString("en-US", { month: "long", day: "numeric" });
   const sAll = streak("all");
-  const msg = future && st.level !== "na" ? `Planned: ${st.total} goal${st.total === 1 ? "" : "s"}` : st.level === "full" ? "All goals done" : st.level === "na" ? "No goals for this day" : `${st.done} of ${st.total} goals done`;
+  const msg = v.off ? "All goals off for this day" : future && st.level !== "na" ? `Planned: ${st.total} goal${st.total === 1 ? "" : "s"}` : st.level === "full" ? "All goals done" : st.level === "na" ? "No goals for this day" : `${st.done} of ${st.total} goals done`;
   return `<div class="dayhead">
     <button class="icon" data-act="prevDay" aria-label="Previous day">‹</button>
     <div class="mid" style="text-align:center"><h1>${title}</h1><p class="sub">${subtitle}</p></div>
     <button class="icon" data-act="nextDay" aria-label="Next day">›</button></div>
     <div class="banner ${st.level}"><span>${msg}</span><small>${future ? "Planning ahead" : `${sAll.cur} day streak · best ${sAll.best}`}</small></div>
     ${vacNote(v)}
-    ${isToday ? "" : `<p class="center"><button class="btn alt sm" data-act="goToday">Back to today</button></p>`}
-    ${future ? `<section class="panel"><p class="muted" style="margin:0">Planning ahead. You can edit this day or use your weekly rest-day move. Check-offs, the timer and meals unlock on the day.</p></section>` : timerCard(v)}${schedulePanel(ds, v)}${studyPanel(ds, v)}${S.settings.workout.enabled ? workoutPanel(v) : ""}${caloriePanel(v)}`;
+    ${isToday ? "" : `<p class="center"><button class="btn alt sm" data-act="goToday">Back to today</button>${ds < t && !v.off ? ` <button class="btn alt sm" data-act="toggleOff">Turn off all goals for this day</button>` : ""}</p>`}
+    ${v.off ? offPanel() : `${future ? `<section class="panel"><p class="muted" style="margin:0">Planning ahead. You can edit this day or use your weekly rest-day move. Check-offs, the timer and meals unlock on the day.</p></section>` : timerCard(v)}${schedulePanel(ds, v)}${studyPanel(ds, v)}${S.settings.workout.enabled ? workoutPanel(v) : ""}${caloriePanel(v)}`}`;
 }
 
 /* ---------- Calendar ---------- */
@@ -1136,6 +1143,12 @@ const ACT = {
     updateDay(ds, d => addSession(d, { classId: el.dataset.id, start, sec: Math.round(m * 60), manual: true }));
   },
   delSession: el => updateDay(S.selDate, d => { d.sessions = d.sessions.filter(x => x.id !== el.dataset.id); }),
+  toggleOff: () => {
+    const ds = S.selDate, on = !S.days[ds]?.off;
+    if (on && ds >= todayStr()) return;                    // only past days can be switched off
+    updateDay(ds, d => { if (on) d.off = true; else delete d.off; });
+    toast(on ? "Goals turned off for this day" : "Goals turned back on");
+  },
   openMove: () => { S.moveFor = S.selDate; render(); },
   cancelMove: () => { S.moveFor = null; render(); },
   confirmMove: async () => {
