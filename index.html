@@ -235,16 +235,14 @@ label.f .in{margin-top:4px;color:var(--ink);font-size:15px}
 
 <script type="module">
 /* ============================================================
-   1. FIREBASE CONFIG — paste yours here (Project settings > Your apps > Web).
-   Leave the placeholders and the app runs in local mode (saves to this browser only).
+   1. FIREBASE CONFIG lives in firebase-config.js (same folder as this file).
+   Keeping it separate means updating index.html never overwrites your keys.
    ============================================================ */
-const FIREBASE_CONFIG = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT",
-  appId: "YOUR_APP_ID"
-};
-const IS_FB = !FIREBASE_CONFIG.apiKey.startsWith("YOUR_");
+let FIREBASE_CONFIG = { apiKey: "YOUR_API_KEY" }, CONFIG_STATUS = "missing";
+try { ({ FIREBASE_CONFIG } = await import("./firebase-config.js")); CONFIG_STATUS = "loaded"; }
+catch (e) { console.warn("Could not load firebase-config.js, running in local mode.", e); }
+const IS_FB = !!FIREBASE_CONFIG?.apiKey && !FIREBASE_CONFIG.apiKey.startsWith("YOUR_");
+const LOCAL_WHY = CONFIG_STATUS === "missing" ? "firebase-config.js not found" : "apiKey not set in firebase-config.js";
 
 /* ============================================================
    2. Helpers
@@ -466,7 +464,7 @@ function render() {
   for (const [id, val] of Object.entries(keep)) { const el = document.getElementById(id); if (el) el.value = val; }
   if (aid) { const el = document.getElementById(aid); if (el) { el.focus(); if (sel) try { el.setSelectionRange(...sel); } catch { } } }
   document.querySelectorAll("nav.tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === S.tab));
-  $("#modeNote").textContent = store.mode === "local" ? "Local mode: saved in this browser only" : "";
+  $("#modeNote").textContent = store.mode === "local" ? `Local mode (${LOCAL_WHY}): saved in this browser only` : "";
 }
 
 function blockLine(p, ds) {
@@ -718,7 +716,7 @@ function renderSetup() {
   </section>
   ${s.workout.enabled ? workoutPanel() : ""}${s.calories.enabled ? caloriePanel() : ""}
   <section class="panel"><div class="panel-head"><h2>Account and data</h2></div>
-    <p class="muted" style="margin:0 0 10px">${store.mode === "firebase" ? `Signed in as ${esc(store.email())}. Your data syncs across devices.` : "Local mode: data lives only in this browser. Add your Firebase config in index.html to sync across devices."}</p>
+    <p class="muted" style="margin:0 0 10px">${store.mode === "firebase" ? `Signed in as ${esc(store.email())}. Your data syncs across devices.` : "Local mode (${LOCAL_WHY}): data lives only in this browser. Fill in firebase-config.js to sync across devices."}</p>
     <label class="f" style="margin-bottom:10px">Send weekly summaries to<input class="in" type="email" value="${esc(s.summaryEmail || "")}" data-chg="summaryEmail" placeholder="you@example.com"></label>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn alt sm" data-act="exportData">Export JSON</button>${store.mode === "firebase" ? `<button class="btn alt sm" data-act="signOut">Sign out</button>` : ""}</div></section>`;
   return h;
