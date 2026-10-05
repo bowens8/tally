@@ -836,8 +836,7 @@ function renderToday() {
     <button class="icon" data-act="nextDay" aria-label="Next day">›</button></div>
     <div class="banner ${st.level}"><span>${msg}</span><small>${future ? "Planning ahead" : `${sAll.cur} day streak · best ${sAll.best}`}</small></div>
     ${vacNote(v)}
-    <p class="center">${isToday ? "" : `<button class="btn alt sm" data-act="goToday">Back to today</button>`}
-      <input type="date" class="in" id="jumpDate" data-chg="jumpDate" value="${ds}" aria-label="Jump to a date" style="width:auto;margin-left:6px;padding:6px 8px;display:inline-block"></p>
+    ${isToday ? "" : `<p class="center"><button class="btn alt sm" data-act="goToday">Back to today</button></p>`}
     ${future ? `<section class="panel"><p class="muted" style="margin:0">Planning ahead. You can edit this day or use your weekly rest-day move. Check-offs, the timer and meals unlock on the day.</p></section>` : timerCard(v)}${schedulePanel(ds, v)}${studyPanel(ds, v)}${S.settings.workout.enabled ? workoutPanel(v) : ""}${caloriePanel(v)}`;
 }
 
@@ -1285,8 +1284,7 @@ const CHG = {
   stepWithin: el => editExam(el.dataset.id, e => { e.steps[+el.dataset.i].within = Math.max(0, Math.round(+el.value || 0)); }),
   stepMode: el => editExam(el.dataset.id, e => { e.steps[+el.dataset.i].mode = el.value; }),
   stepValue: el => editExam(el.dataset.id, e => { e.steps[+el.dataset.i].value = Math.max(0, num(el.value) ?? 0); }),
-  weightUnit: el => commitSettings({ weightUnit: el.value }),
-  jumpDate: el => { if (el.value) { S.selDate = el.value; S.editPlan = false; render(); } }
+  weightUnit: el => commitSettings({ weightUnit: el.value })
 };
 document.addEventListener("click", e => { const el = e.target.closest("[data-act]"); if (el && !el.disabled) ACT[el.dataset.act]?.(el, e); });
 document.addEventListener("change", e => { const el = e.target.closest("[data-chg]"); if (el) CHG[el.dataset.chg]?.(el); });
