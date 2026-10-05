@@ -1,4 +1,4 @@
- <!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -305,6 +305,18 @@ nav.tabs button{max-width:none;padding:11px 2px;font-size:13px}
 .row.study .rmeta{margin-top:6px;font-size:12px}
 .row.study .icon.sm{width:34px;height:34px}
 h1{overflow-wrap:anywhere}
+/* ---- v6: workouts on the schedule, vacations ---- */
+.tl-b.wk b::before{content:"";}
+.exline{margin:10px 0 0;text-align:center;font-size:14px;color:var(--ink)}
+.exline b{font-family:var(--display)}
+.vacnote{margin:10px 0 0;text-align:center;font-size:13px;color:#5E6B77;background:#D3DAE0;border-radius:10px;padding:7px 10px}
+.cell.vac::before{content:"✈";position:absolute;right:3px;bottom:1px;font-size:10px;line-height:1;z-index:3;color:#33414E}
+.cell.full.vac::before{color:#fff}
+.wkrow{display:grid;grid-template-columns:40px 1fr 32px;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.wkrow:first-of-type{border-top:0}
+.wkrow.restrow{grid-template-columns:40px 1fr auto}
+.wkrow2{grid-column:2 / 4;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.wkrow .dn2{font:700 13px var(--display)}
 </style>
 </head>
 <body>
@@ -424,7 +436,7 @@ if (IS_FB) {
 const STD_STEPS = [{ within: 14, mode: "x", value: 1.5 }, { within: 7, mode: "x", value: 2 }, { within: 3, mode: "x", value: 2.5 }];
 const PLUS_STEPS = [{ within: 14, mode: "+", value: 15 }, { within: 7, mode: "+", value: 30 }, { within: 3, mode: "+", value: 60 }];
 const defaultSettings = () => ({
-  classes: [], exams: [], weights: [], weightUnit: "lb", startDate: todayStr(),
+  classes: [], exams: [], weights: [], vacations: [], weightUnit: "lb", startDate: todayStr(),
   studyStart: "16:00", breakMin: 10, examBoost: true, summaryEmail: "",
   study: { enabled: true },
   workout: { enabled: true, plan: {} },
@@ -439,11 +451,11 @@ function mergeSettings(r) {
   const cal = { ...d.calories, ...r.calories }; cal.limits = cal.limits || {};
   const classes = (r.classes || []).map(c => ({ start: "", ...c }));
   const exams = r.exams || classes.filter(c => c.exam).map(c => ({ id: uid(), classId: c.id, name: `${c.name} exam`, date: c.exam, steps: structuredClone(STD_STEPS), score: null, max: 100 }));
-  return { ...d, ...r, classes, exams, weights: r.weights || [], study: { ...d.study, ...r.study }, workout: wk, calories: cal };
+  return { ...d, ...r, classes, exams, weights: r.weights || [], vacations: r.vacations || [], study: { ...d.study, ...r.study }, workout: wk, calories: cal };
 }
 const S = {
   tab: "today", selDate: todayStr(), cal: { mode: "month", cursor: todayStr() }, editPlan: false,
-  settings: defaultSettings(), bulk: { wk: [], cal: [] }, days: {}, loaded: { s: false, d: false }, seeded: false, unsub: null
+  settings: defaultSettings(), bulk: { wk: [], cal: [] }, vacNew: { study: true, workout: true, cal: true }, days: {}, loaded: { s: false, d: false }, seeded: false, unsub: null
 };
 const classById = id => S.settings.classes.find(c => c.id === id);
 const className = id => classById(id)?.name || (id === "_other" ? "General study" : "Class");
@@ -462,10 +474,11 @@ function applyRamp(base, ex, ds) {
   return round5(g);
 }
 /* Stack classes without a fixed start in list order, flowing around fixed ones. */
-function layoutPlan(plan) {
+const fixedBlocks = (...ws) => ws.filter(w => w && w.start != null).map(w => ({ start: w.start, goal: w.minutes }));
+function layoutPlan(plan, fixed = []) {
   const st = S.settings, br = st.breakMin ?? 10;
   const order = [...new Set([...st.classes.map(c => c.id), ...Object.keys(plan)])].filter(id => plan[id]);
-  const pinned = order.map(id => plan[id]).filter(p => p.pin && p.start != null);
+  const pinned = [...order.map(id => plan[id]).filter(p => p.pin && p.start != null), ...fixed];
   let cur = hm(st.studyStart);
   for (const id of order) {
     const p = plan[id]; if (p.pin && p.start != null) continue;
@@ -486,16 +499,27 @@ function makeSnap(ds) {
     const pin = hm(c.start) != null;
     plan[c.id] = { name: c.name, color: c.color, goal, start: pin ? hm(c.start) : null, pin, exam: ex ? { name: ex.name, date: ex.date } : null, adjusted: goal !== c.minutes };
   }
-  layoutPlan(plan);
   const wp = st.workout.plan?.[dow], lim = st.calories.limits?.[dow] ?? st.calories.limit;
-  return { plan, workout: st.workout.enabled && wp && wp.minutes > 0 ? { ...wp } : false, cal: st.calories.enabled && lim > 0, limit: lim };
+  const workout = st.workout.enabled && wp && wp.minutes > 0 ? { label: wp.label, minutes: wp.minutes, start: hm(wp.start) } : false;
+  layoutPlan(plan, fixedBlocks(workout));
+  return { plan, workout, cal: st.calories.enabled && lim > 0, limit: lim };
 }
 const newDay = ds => ({ date: ds, snap: makeSnap(ds), custom: false, done: {}, sessions: [], workout: { done: false, note: "" }, cal: { entries: [], ok: false } });
+function vacationFor(ds) {
+  const hit = S.settings.vacations.filter(v => v.start <= ds && ds <= v.end);
+  if (!hit.length) return null;
+  const absent = { study: false, workout: false, cal: false };
+  hit.forEach(v => { for (const k in absent) if (v.absent?.[k]) absent[k] = true; });
+  return { names: hit.map(v => v.name || "Away"), absent };
+}
 function dayView(ds) {
-  const d = S.days[ds];
+  const d = S.days[ds], vac = vacationFor(ds);
+  let snap = d?.snap || makeSnap(ds);
+  if (d?.snap && ds >= todayStr()) { snap = { ...snap, plan: structuredClone(snap.plan) }; layoutPlan(snap.plan, fixedBlocks(snap.workout, d.extra)); }
+  if (vac) snap = { ...snap, plan: vac.absent.study ? {} : snap.plan, workout: vac.absent.workout ? false : snap.workout, cal: vac.absent.cal ? false : snap.cal };
   return {
-    snap: d?.snap || makeSnap(ds), moved: d?.moved || null, extra: d?.extra || null, done: d?.done || {}, sessions: d?.sessions || [],
-    workout: d?.workout || { done: false, note: "" }, cal: d?.cal || { entries: [], ok: false }, custom: !!d?.custom
+    snap, vac, moved: d?.moved || null, extra: d?.extra || null, done: d?.done || {}, sessions: d?.sessions || [],
+    workout: d?.workout || { done: false, note: "" }, cal: d?.cal || { entries: [], ok: false }, custom: !!(d?.custom || d?.customWk)
   };
 }
 /* One rest day per week (Sun-Sat): the workout moves to a later day that week. */
@@ -504,8 +528,8 @@ const wkdayName = ds => parse(ds).toLocaleDateString("en-US", { weekday: "short"
 function moveUsedInWeek(ds) { const [a, b] = weekBounds(ds); return Object.keys(S.days).find(k => k >= a && k <= b && S.days[k].moved) || null; }
 function workoutItems(v) {
   const items = [];
-  if (v.snap.workout && !v.moved) items.push({ key: "main", label: v.snap.workout.label, minutes: v.snap.workout.minutes, done: !!v.workout.done });
-  if (v.extra && S.settings.workout.enabled) items.push({ key: "extra", label: v.extra.label, minutes: v.extra.minutes, done: !!v.extra.done, from: v.extra.from });
+  if (v.snap.workout && !v.moved) items.push({ key: "main", label: v.snap.workout.label, minutes: v.snap.workout.minutes, start: v.snap.workout.start ?? null, done: !!v.workout.done });
+  if (v.extra && S.settings.workout.enabled) items.push({ key: "extra", label: v.extra.label, minutes: v.extra.minutes, start: v.extra.start ?? null, done: !!v.extra.done, from: v.extra.from });
   return items;
 }
 const calTotal = v => v.cal.entries.reduce((a, e) => a + e.kcal, 0);
@@ -566,7 +590,7 @@ function commitSettings(partial) {
   Object.assign(S.settings, partial);
   store.saveSettings(partial);
   const t = todayStr();
-  if (S.days[t]) updateDay(t, d => { const keep = d.custom ? d.snap.plan : null; d.snap = makeSnap(t); if (keep) d.snap.plan = keep; }); else render();
+  if (S.days[t]) updateDay(t, d => { const kp = d.snap.plan, kw = d.snap.workout; d.snap = makeSnap(t); if (d.custom) d.snap.plan = kp; if (d.customWk) d.snap.workout = kw; }); else render();
 }
 
 /* ---------- stats ---------- */
@@ -654,12 +678,15 @@ function timerCard(v) {
     <div class="trow"><div class="clock idle">0:00</div><button class="btn go" data-act="startTimerSel">Start timer</button></div></div></section>`;
 }
 
+const WK_COLOR = "#E07B2A";
 function timeline(v) {
   const plan = v.snap.plan, ids = sortedIds(plan).filter(id => plan[id].start != null);
   const act = v.sessions.filter(x => !x.manual && x.start);
-  if (!ids.length && !act.length) return "";
+  const wk = workoutItems(v).filter(i => i.start != null);
+  if (!ids.length && !act.length && !wk.length) return "";
   let lo = 1440, hi = 0;
   ids.forEach(id => { lo = Math.min(lo, plan[id].start); hi = Math.max(hi, plan[id].start + plan[id].goal); });
+  wk.forEach(i => { lo = Math.min(lo, i.start); hi = Math.max(hi, i.start + i.minutes); });
   act.forEach(x => { const a = minOfDay(x.start); lo = Math.min(lo, a); hi = Math.max(hi, Math.min(1440, a + x.sec / 60)); });
   lo = Math.max(0, Math.floor((lo - 30) / 60) * 60); hi = Math.min(1440, Math.ceil((hi + 30) / 60) * 60);
   let g = `<div class="tl" style="height:${hi - lo}px">`;
@@ -669,11 +696,37 @@ function timeline(v) {
     g += `<button class="tl-b ${done ? "done" : ""}" data-act="playClass" data-id="${id}" ${S.settings.timer || isFuture() ? "disabled" : ""} style="top:${p.start - lo}px;height:${Math.max(26, p.goal)}px;background:${p.color}26;border-left-color:${p.color}">
       <b>${esc(p.name)}</b><span>${fmtTime(p.start)} – ${fmtTime(p.start + p.goal)}</span>${done ? `<i class="tl-ck">${CHECK}</i>` : ""}</button>`;
   }
+  for (const i of wk) {
+    g += `<button class="tl-b wk ${i.done ? "done" : ""}" data-act="${i.key === "main" ? "toggleWorkout" : "toggleExtra"}" ${isFuture() ? "disabled" : ""} style="top:${i.start - lo}px;height:${Math.max(26, i.minutes)}px;background:${WK_COLOR}26;border-left-color:${WK_COLOR}">
+      <b>${esc(i.label)}</b><span>${fmtTime(i.start)} – ${fmtTime(i.start + i.minutes)} · workout</span>${i.done ? `<i class="tl-ck">${CHECK}</i>` : ""}</button>`;
+  }
   for (const x of act) {
     const a = minOfDay(x.start), c = classById(x.classId)?.color || "#5B6B7B";
     g += `<div class="tl-s" title="${esc(className(x.classId))}, ${fmtMin(x.sec / 60)}" style="top:${a - lo}px;height:${Math.max(4, x.sec / 60)}px;background:${c}"></div>`;
   }
-  return g + `</div><p class="legend" style="margin:6px 0 10px"><span>Left: planned blocks (tap one to start the timer)</span><span>Right: when you actually studied</span></p>`;
+  return g + `</div><p class="legend" style="margin:6px 0 10px"><span>Left: planned (tap a class to start the timer, a workout to check it off)</span><span>Right: when you actually studied</span></p>`;
+}
+
+function schedulePanel(ds, v) {
+  const s = S.settings, plan = v.snap.plan, ids = sortedIds(plan), wk = v.snap.workout;
+  let h = `<section class="panel"><div class="panel-head"><h2>Schedule</h2><div class="hbtns"><button class="mini" data-act="toggleEdit">${S.editPlan ? "Done editing" : "Edit this day"}</button></div></div>`;
+  h += timeline(v) || `<p class="empty">Nothing is scheduled at a set time. Give workouts and classes start times in Setup, or use "Edit this day".</p>`;
+  if (S.editPlan) {
+    const missing = s.classes.filter(c => !plan[c.id]);
+    h += `<div class="editbox"><p class="muted" style="margin:0 0 6px;font-size:13px">Changes here only affect ${isTodayStr(ds) ? "today" : shortDate(ds)}. Minutes of 0 remove an item from this day. Clear a start time to let Tally place a class.</p>
+      ${ids.map(id => `<div class="erow"><span class="nm"><i class="dot" style="background:${plan[id].color}"></i> ${esc(plan[id].name)}</span>
+        <input class="in" type="number" min="0" step="5" value="${plan[id].goal}" data-chg="dayMin" data-id="${id}" aria-label="Minutes for ${esc(plan[id].name)}">
+        <input class="in" type="time" value="${plan[id].start != null ? toHM(plan[id].start) : ""}" data-chg="dayStart" data-id="${id}" aria-label="Start time for ${esc(plan[id].name)}">
+        <button class="icon sm danger" data-act="dayRemove" data-id="${id}" aria-label="Remove from this day">×</button></div>`).join("")}
+      ${wk ? `<div class="erow"><span class="nm"><i class="dot" style="background:${WK_COLOR}"></i> ${esc(wk.label)}</span>
+        <input class="in" type="number" min="0" step="5" value="${wk.minutes}" data-chg="dayWkMin" aria-label="Workout minutes">
+        <input class="in" type="time" value="${wk.start != null ? toHM(wk.start) : ""}" data-chg="dayWkStart" aria-label="Workout start time">
+        <button class="icon sm danger" data-act="dayWkRemove" aria-label="Remove workout from this day">×</button></div>`
+        : `<p style="margin:8px 0 0"><button class="btn alt sm" data-act="dayWkAdd">Add a workout to this day</button></p>`}
+      ${missing.length ? `<div class="addrow"><select class="in" id="dayAddSel" data-keep>${missing.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select><button class="btn sm" data-act="dayAdd">Add class to this day</button></div>` : ""}
+      ${v.custom ? `<button class="btn alt sm" style="margin-top:10px" data-act="dayReset">Reset to my usual plan</button>` : ""}</div>`;
+  }
+  return h + `</section>`;
 }
 
 function studyPanel(ds, v) {
@@ -685,11 +738,11 @@ function studyPanel(ds, v) {
     return `<div class="sess"><span>${when}</span><span class="grow">${esc(className(x.classId))}</span><span>${fmtMin(x.sec / 60)}</span>
       <button class="icon sm danger" data-act="delSession" data-id="${x.id}" aria-label="Delete session">×</button></div>`;
   }).join("")}</details>` : "";
-  let h = `<section class="panel"><div class="panel-head"><h2>Study</h2><div class="hbtns"><button class="mini" data-act="toggleEdit">${S.editPlan ? "Done editing" : "Edit this day"}</button></div></div>`;
+  let h = `<section class="panel"><div class="panel-head"><h2>Study</h2></div>`;
+  if (v.vac?.absent.study) return h + `<p class="empty">Away (${esc(v.vac.names.join(", "))}): study isn't counted on this day. Time you log still gets recorded.</p>${sessionList}</section>`;
   if (!s.classes.length) return h + `<p class="empty">Add your classes in Setup and Tally builds a daily study plan. You can still use the timer above for general study.</p>${sessionList}</section>`;
   h += `<p class="muted" style="margin:-4px 0 8px;font-size:13px">${fmtMin(all)} studied${ids.length ? ` · ${fmtMin(planMin)} planned` : ""}</p>`;
-  if (!ids.length) h += `<p class="empty">No classes scheduled for ${DOW[parse(ds).getDay()]}. Use "Edit this day" to add one just for today.</p>`;
-  h += timeline(v);
+  if (!ids.length) h += `<p class="empty">No classes scheduled for ${DOW[parse(ds).getDay()]}. Use "Edit this day" in the Schedule to add one just for this day.</p>`;
   h += ids.map(id => {
     const p = plan[id], logged = loggedMin(v, id), pct = Math.min(100, logged / p.goal * 100), done = !!v.done[id];
     return `<div class="row study ${done ? "done" : ""}">
@@ -700,16 +753,6 @@ function studyPanel(ds, v) {
       <button class="icon sm" data-act="playClass" data-id="${id}" ${t0 || isFuture() ? "disabled" : ""} aria-label="Start timer for ${esc(p.name)}">▶</button>
       <button class="icon sm" data-act="addMin" data-id="${id}" ${isFuture() ? "disabled" : ""} aria-label="Add minutes to ${esc(p.name)}">+</button></div>`;
   }).join("");
-  if (S.editPlan) {
-    const missing = s.classes.filter(c => !plan[c.id]);
-    h += `<div class="editbox"><p class="muted" style="margin:0 0 6px;font-size:13px">Changes here only affect ${isTodayStr(ds) ? "today" : shortDate(ds)}. Minutes of 0 remove the class from this day. Clear a start time to let Tally place it.</p>
-      ${ids.map(id => `<div class="erow"><span class="nm"><i class="dot" style="background:${plan[id].color}"></i> ${esc(plan[id].name)}</span>
-        <input class="in" type="number" min="0" step="5" value="${plan[id].goal}" data-chg="dayMin" data-id="${id}" aria-label="Minutes for ${esc(plan[id].name)}">
-        <input class="in" type="time" value="${plan[id].start != null ? toHM(plan[id].start) : ""}" data-chg="dayStart" data-id="${id}" aria-label="Start time for ${esc(plan[id].name)}">
-        <button class="icon sm danger" data-act="dayRemove" data-id="${id}" aria-label="Remove from this day">×</button></div>`).join("")}
-      ${missing.length ? `<div class="addrow"><select class="in" id="dayAddSel" data-keep>${missing.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select><button class="btn sm" data-act="dayAdd">Add to this day</button></div>` : ""}
-      ${v.custom ? `<button class="btn alt sm" style="margin-top:10px" data-act="dayReset">Reset to my usual plan</button>` : ""}</div>`;
-  }
   return h + sessionList + `</section>`;
 }
 const isTodayStr = ds => ds === todayStr();
@@ -718,6 +761,7 @@ const isFuture = () => S.selDate > todayStr();
 function workoutPanel(v) {
   const ds = S.selDate, t = todayStr(), future = ds > t, items = workoutItems(v), wp = v.snap.workout;
   let h = `<section class="panel"><div class="panel-head"><h2>Workout</h2></div>`;
+  if (v.vac?.absent.workout && !items.length) return h + `<p class="empty">Away (${esc(v.vac.names.join(", "))}): workouts aren't counted on this day.</p></section>`;
   if (v.moved) {
     const doneAlready = !!S.days[v.moved.to]?.extra?.done;
     h += `<p class="empty">Rest day. Your ${esc(v.moved.label)} (${v.moved.minutes} min) moved to <b>${wkdayName(v.moved.to)}</b>. If it isn't done that day, that day counts as missed.</p>
@@ -728,13 +772,13 @@ function workoutPanel(v) {
   for (const it of items) {
     const main = it.key === "main";
     h += `<div class="row"><button class="check big ${it.done ? "on" : ""}" data-act="${main ? "toggleWorkout" : "toggleExtra"}" ${future ? "disabled" : ""} aria-pressed="${it.done}" aria-label="Mark ${esc(it.label)} done">${CHECK}</button>
-      <div class="rowmain"><div class="rname">${esc(it.label)}</div><div class="blk">${it.minutes} min goal${it.from ? ` · moved from ${wkdayName(it.from)}` : ""}${it.done ? " · done" : ""}</div></div></div>
+      <div class="rowmain"><div class="rname">${esc(it.label)}</div><div class="blk">${it.minutes} min goal${it.start != null ? ` · ${fmtTime(it.start)}` : ""}${it.from ? ` · moved from ${wkdayName(it.from)}` : ""}${it.done ? " · done" : ""}</div></div></div>
       <input class="in" id="${main ? "wkNote" : "wkNoteX"}" data-keep data-chg="${main ? "workoutNote" : "extraNote"}" placeholder="What did you do? (optional)" value="${esc(main ? v.workout.note : v.extra.note || "")}">`;
     if (!main && !it.done && it.from >= t) h += `<p style="margin:8px 0 0"><button class="mini" data-act="undoMove" data-src="${it.from}">Cancel move</button></p>`;
   }
   if (wp && !v.moved && ds >= t) {
     const used = moveUsedInWeek(ds), [, we] = weekBounds(ds), targets = [];
-    for (let d = addDays(ds, 1); d <= we; d = addDays(d, 1)) targets.push(d);
+    for (let d = addDays(ds, 1); d <= we; d = addDays(d, 1)) if (!vacationFor(d)?.absent.workout) targets.push(d);
     if (used) h += `<p class="muted" style="font-size:13px;margin:12px 0 0">This week's rest-day move is used (${wkdayName(used)} to ${wkdayName(S.days[used].moved.to)}).</p>`;
     else if (!targets.length) h += `<p class="muted" style="font-size:13px;margin:12px 0 0">No days left this week to move this workout to.</p>`;
     else if (S.moveFor === ds) h += `<div class="editbox"><b style="font:700 14px var(--display)">Move this workout to</b>
@@ -747,7 +791,7 @@ function workoutPanel(v) {
 
 function caloriePanel(v) {
   if (!S.settings.calories.enabled) return "";
-  if (!v.snap.cal) return `<section class="panel"><div class="panel-head"><h2>Calories</h2></div><p class="empty">No calorie limit for this day.</p></section>`;
+  if (!v.snap.cal) return `<section class="panel"><div class="panel-head"><h2>Calories</h2></div><p class="empty">${v.vac?.absent.cal ? `Away (${esc(v.vac.names.join(", "))}): calories aren't counted on this day.` : "No calorie limit for this day."}</p></section>`;
   let h = `<section class="panel"><div class="panel-head"><h2>Calories</h2></div>`;
   if (isFuture()) return h + `<p class="empty">Limit for this day: ${v.snap.limit} kcal. Logging opens on the day.</p></section>`;
   const tot = calTotal(v), lim = v.snap.limit, over = tot > lim, pct = Math.min(100, tot / lim * 100);
@@ -762,6 +806,26 @@ function caloriePanel(v) {
       <button class="icon sm danger" data-act="delCal" data-id="${e.id}" aria-label="Delete entry">×</button></div>`).join("")}${foot}</section>`;
 }
 
+function vacNote(v) {
+  if (!v.vac) return "";
+  const a = v.vac.absent, names = [a.study && "study", a.workout && "workouts", a.cal && "calories"].filter(Boolean);
+  return names.length ? `<p class="vacnote">✈ ${esc(v.vac.names.join(", "))} · away: ${names.join(", ")}</p>` : "";
+}
+function studyDaysLeft(ex, from) {
+  if (!S.settings.study.enabled) return 0;
+  const c = classById(ex.classId), cls = c ? [c] : S.settings.classes; let n = 0;
+  for (let d = from; d < ex.date; d = addDays(d, 1)) {
+    if (vacationFor(d)?.absent.study) continue;
+    const dow = parse(d).getDay(); if (cls.some(k => k.days.includes(dow) && k.minutes > 0)) n++;
+  }
+  return n;
+}
+function nextExamLine(ds) {
+  const ex = S.settings.exams.filter(e => e.date >= ds).sort((a, b) => a.date < b.date ? -1 : 1)[0];
+  if (!ex) return "";
+  const n = studyDaysLeft(ex, ds);
+  return `<p class="exline"><b>Next exam:</b> ${esc(ex.name)} on ${wkdayName(ex.date)} (${n} study day${n === 1 ? "" : "s"})</p>`;
+}
 function renderToday() {
   const ds = S.selDate, t = todayStr(), isToday = ds === t, v = dayView(ds), st = status(ds);
   const future = ds > t, special = isToday || ds === addDays(t, -1) || ds === addDays(t, 1);
@@ -774,30 +838,33 @@ function renderToday() {
     <div class="mid" style="text-align:center"><h1>${title}</h1><p class="sub">${subtitle}</p></div>
     <button class="icon" data-act="nextDay" aria-label="Next day">›</button></div>
     <div class="banner ${st.level}"><span>${msg}</span><small>${future ? "Planning ahead" : `${sAll.cur} day streak · best ${sAll.best}`}</small></div>
+    ${vacNote(v)}${nextExamLine(ds)}
     <p class="center">${isToday ? "" : `<button class="btn alt sm" data-act="goToday">Back to today</button>`}
       <input type="date" class="in" id="jumpDate" data-chg="jumpDate" value="${ds}" aria-label="Jump to a date" style="width:auto;margin-left:6px;padding:6px 8px;display:inline-block"></p>
-    ${future ? `<section class="panel"><p class="muted" style="margin:0">Planning ahead. You can edit this day or use your weekly rest-day move. Check-offs, the timer and meals unlock on the day.</p></section>` : timerCard(v)}${studyPanel(ds, v)}${S.settings.workout.enabled ? workoutPanel(v) : ""}${caloriePanel(v)}`;
+    ${future ? `<section class="panel"><p class="muted" style="margin:0">Planning ahead. You can edit this day or use your weekly rest-day move. Check-offs, the timer and meals unlock on the day.</p></section>` : timerCard(v)}${schedulePanel(ds, v)}${studyPanel(ds, v)}${S.settings.workout.enabled ? workoutPanel(v) : ""}${caloriePanel(v)}`;
 }
 
 /* ---------- Calendar ---------- */
 const examNames = ds => S.settings.exams.filter(e => e.date === ds).map(e => e.name).join(", ");
 const movedChip = ds => { const d = S.days[ds]; if (d?.moved) return `<span class="chip rest">Workout moved to ${DOW[parse(d.moved.to).getDay()]}</span>`; if (d?.extra) return `<span class="chip">Moved from ${DOW[parse(d.extra.from).getDay()]}</span>`; return ""; };
+const vacChip = ds => { const v = vacationFor(ds); if (!v) return ""; const n = [v.absent.study && "study", v.absent.workout && "workout", v.absent.cal && "calories"].filter(Boolean); return n.length ? `<span class="chip rest">✈ Away: ${n.join(", ")}</span>` : ""; };
 const examChip = ds => { const n = examNames(ds); return n ? `<span class="chip exam">Exam: ${esc(n)}</span>` : ""; };
 const SEGCOL = { ok: "#17A058", fail: "#E0605A", open: "#FFFFFF" };
 
 function dayCell(ds, n) {
-  const t = todayStr(), future = ds > t, before = ds < startDateStr(), st = status(ds), ex = examNames(ds);
+  const t = todayStr(), future = ds > t, before = ds < startDateStr(), st = status(ds), ex = examNames(ds), away = vacChip(ds) !== "";
   let cls = "", inner = "";
-  if (future || before) cls = future ? "future" : "before";
+  if (before) cls = "before";
   else if (st.level === "na") cls = "na";
+  else if (future) cls = "future";
   else inner = `<span class="segs">${segs(ds).map(x => `<i class="${x.state}"></i>`).join("")}</span>${st.level === "full" ? `<span class="ck">${CHECK}</span>` : ""}`;
-  return `<button class="cell ${cls} ${ds === t ? "today" : ""} ${ex ? "exam" : ""}" data-act="openDay" data-date="${ds}" aria-label="${longDate(ds)}${ex ? ", exam: " + esc(ex) : ""}">${inner}<span class="dn">${n}</span></button>`;
+  return `<button class="cell ${cls} ${ds === t ? "today" : ""} ${ex ? "exam" : ""} ${away ? "vac" : ""}" data-act="openDay" data-date="${ds}" aria-label="${longDate(ds)}${ex ? ", exam: " + esc(ex) : ""}">${inner}<span class="dn">${n}</span></button>`;
 }
 function sqCell(ds) {
   const t = todayStr(), st = status(ds);
-  if (ds > t) return `<i class="sq future"></i>`;
   if (ds < startDateStr()) return `<i class="sq before"></i>`;
   if (st.level === "na") return `<i class="sq na"></i>`;
+  if (ds > t) return `<i class="sq future"></i>`;
   const sg = segs(ds), w = 100 / sg.length;
   const grad = sg.length === 1 ? SEGCOL[sg[0].state] : `linear-gradient(to right, ${sg.map((x, i) => `${SEGCOL[x.state]} ${i * w}% ${(i + 1) * w}%`).join(", ")})`;
   return `<i class="sq" style="background:${grad}"></i>`;
@@ -838,7 +905,7 @@ function streakTiles() {
   const defs = [["all", "All goals"], ["study", "Study"], ["workout", "Workout"], ["cal", "Calories"]];
   return `<div class="tiles">${defs.map(([k, n]) => { const r = streak(k); return `<div class="tile ${r.cur >= 3 ? "hot" : ""}"><b>${r.cur}</b><span>${n} streak</span><i>best ${r.best}</i></div>`; }).join("")}</div>`;
 }
-const LEGEND = `<div class="legend"><span><i class="lg" style="background:var(--green)"></i>Met</span><span><i class="lg" style="background:#E0605A"></i>Missed</span><span><i class="lg" style="background:#fff"></i>Open</span><span><i class="lg" style="background:#D3DAE0"></i>Rest / no goal</span><span>◆ Exam</span></div>
+const LEGEND = `<div class="legend"><span><i class="lg" style="background:var(--green)"></i>Met</span><span><i class="lg" style="background:#E0605A"></i>Missed</span><span><i class="lg" style="background:#fff"></i>Open</span><span><i class="lg" style="background:#D3DAE0"></i>Rest / no goal</span><span>◆ Exam</span><span>✈ Away</span></div>
   <p class="muted" style="font-size:12px;margin:6px 0 0">Each day is split into one band per goal: study, workout, calories.</p>`;
 
 function renderCalendar() {
@@ -851,7 +918,7 @@ function renderCalendar() {
       const st = status(ds), future = ds > t, sg = segs(ds), names = { study: "Study", workout: "Workout", cal: "Calories" };
       const chips = (future || ds < s0) ? `<span class="chip">${future ? "Upcoming" : "Before start"}</span>` : st.level === "na" ? `<span class="chip rest">Rest / no goals</span>` : sg.map(x => `<span class="chip ${x.state}">${names[x.k]}</span>`).join("");
       return `<button class="wrow ${!future && st.level === "full" ? "full" : ""}" data-act="openDay" data-date="${ds}">
-        <div class="wd"><b>${DOW[parse(ds).getDay()]}</b><span>${shortDate(ds)}</span></div><div class="wchips">${chips}${examChip(ds)}${movedChip(ds)}</div>
+        <div class="wd"><b>${DOW[parse(ds).getDay()]}</b><span>${shortDate(ds)}</span></div><div class="wchips">${chips}${examChip(ds)}${movedChip(ds)}${vacChip(ds)}</div>
         ${!future && st.level === "full" ? `<span class="wcheck">${CHECK}</span>` : ""}</button>`;
     }).join("") + weekPanel(dates);
   } else if (c.mode === "month") {
@@ -894,7 +961,7 @@ function examCard(ex) {
   const when = n > 0 ? `in ${n} day${n === 1 ? "" : "s"}` : n === 0 ? "today" : `${-n} day${n === -1 ? "" : "s"} ago`;
   const pct = ex.score != null && ex.max > 0 ? Math.round(ex.score / ex.max * 1000) / 10 : null;
   const steps = ex.steps || [];
-  return `<div class="exam"><h3>${c ? `<i class="dot" style="background:${c.color}"></i>` : ""}${esc(ex.name)} <span class="when">${shortDate(ex.date)} · ${when}</span>
+  return `<div class="exam"><h3>${c ? `<i class="dot" style="background:${c.color}"></i>` : ""}${esc(ex.name)} <span class="when">${shortDate(ex.date)} · ${when}${n > 0 ? ` (${studyDaysLeft(ex, t)} study day${studyDaysLeft(ex, t) === 1 ? "" : "s"})` : ""}</span>
       <button class="icon sm danger" style="margin-left:auto" data-act="delExam" data-id="${ex.id}" aria-label="Delete exam">×</button></h3>
     ${st ? `<div class="exstats"><div class="stat"><b>${fmtMin(st.min)}</b>studied for this exam</div><div class="stat"><b>${st.days}</b>days studied</div><div class="stat"><b>${st.days ? fmtMin(st.min / st.days) : "0m"}</b>avg per study day</div><div class="stat"><b>${st.sessions}</b>sessions</div></div>
       <p class="muted" style="font-size:12px;margin:6px 0 0">Counts ${esc(c?.name || "class")} study ${st.prev ? "since " + shortDate(st.prev) : "so far"}, including time over your daily goal.</p>` : `<p class="muted" style="font-size:12px;margin:6px 0 0">Pick a class on this exam to see how long you studied for it.</p>`}
@@ -955,16 +1022,35 @@ const bulkChips = kind => `<div class="chips">${DOW.map((n, i) => `<button class
 function workoutSetup() {
   const plan = S.settings.workout.plan || {};
   return `<section class="panel"><div class="panel-head"><h2>Workout plan</h2></div>
-    <p class="muted" style="margin:-4px 0 10px;font-size:13px">A day with 0 minutes (or "Rest day") has no workout goal and shows gray on the calendar.</p>
+    <p class="muted" style="margin:-4px 0 10px;font-size:13px">A day with 0 minutes (or "Rest day") has no workout goal and shows gray. Give a workout a start time and it appears on your daily schedule.</p>
     <div class="bulk"><b style="font:700 14px var(--display)">Set several days at once</b>
       <div class="addrow"><input class="in" id="bulkWkLabel" data-keep placeholder="Goal, e.g. Upper body"><input class="in" id="bulkWkMin" data-keep inputmode="numeric" placeholder="min"></div>
+      <label class="f" style="margin-top:8px">Start time (optional)<input class="in" type="time" id="bulkWkStart" data-keep></label>
       ${bulkChips("wk")}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn sm" data-act="bulkWkApply">Apply to selected days</button><button class="btn alt sm" data-act="bulkWkRest">Make selected days rest days</button></div></div>
-    ${DOW.map((n, i) => plan[i] ? `<div class="dayrow"><span class="dn2">${n}</span>
+    ${DOW.map((n, i) => plan[i] ? `<div class="wkrow"><span class="dn2">${n}</span>
         <input class="in" value="${esc(plan[i].label)}" data-chg="wkLabel" data-d="${i}" aria-label="${n} workout goal">
-        <input class="in" type="number" min="0" step="5" value="${plan[i].minutes || ""}" placeholder="min" data-chg="wkMin" data-d="${i}" aria-label="${n} minutes">
-        <button class="icon sm danger" data-act="wkRest" data-d="${i}" aria-label="Make ${n} a rest day">×</button></div>`
-      : `<div class="dayrow"><span class="dn2">${n}</span><span class="rest">Rest day</span><button class="btn alt sm" data-act="wkAdd" data-d="${i}" style="grid-column:4;padding:6px 10px">Add</button></div>`).join("")}</section>`;
+        <button class="icon sm danger" data-act="wkRest" data-d="${i}" aria-label="Make ${n} a rest day">×</button>
+        <div class="wkrow2"><label class="f">Minutes<input class="in" type="number" min="0" step="5" value="${plan[i].minutes || ""}" placeholder="min" data-chg="wkMin" data-d="${i}"></label>
+          <label class="f">Start time<input class="in" type="time" value="${esc(plan[i].start || "")}" data-chg="wkStart" data-d="${i}"></label></div></div>`
+      : `<div class="wkrow restrow"><span class="dn2">${n}</span><span class="muted">Rest day</span><button class="btn alt sm" data-act="wkAdd" data-d="${i}" style="padding:6px 12px">Add</button></div>`).join("")}</section>`;
+}
+function vacationSetup() {
+  const vs = S.settings.vacations.slice().sort((a, b) => a.start < b.start ? -1 : 1), nv = S.vacNew;
+  const chips = (absent, id) => [["study", "Study"], ["workout", "Workout"], ["cal", "Calories"]].map(([k, n]) =>
+    `<button class="cb ${absent?.[k] ? "on" : ""}" data-act="${id ? "vacToggle" : "vacNewToggle"}" ${id ? `data-id="${id}"` : ""} data-k="${k}" aria-pressed="${!!absent?.[k]}">${n}</button>`).join("");
+  return `<section class="panel"><div class="panel-head"><h2>Vacations and time away</h2><span class="tot">${vs.length}</span></div>
+    <p class="muted" style="margin:-4px 0 10px;font-size:13px">Schedule time away ahead of time and choose which goals are absent. Absent goals don't count for or against you and show gray on the calendar. Goals you leave on still count.</p>
+    <div class="bulk"><b style="font:700 14px var(--display)">Add time away</b>
+      <div class="addrow"><input class="in" id="vacName" data-keep placeholder="Label, e.g. Spring break"></div>
+      <div class="cls-grid" style="margin-top:8px"><label class="f">First day<input class="in" type="date" id="vacStart" data-keep></label><label class="f">Last day<input class="in" type="date" id="vacEnd" data-keep></label></div>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">Goals absent during this time:</p><div class="chips" style="margin-top:6px">${chips(nv, null)}</div>
+      <button class="btn sm" style="margin-top:10px" data-act="addVac">Add</button></div>
+    ${vs.map(v => { const n = daysUntil(v.end, v.start) + 1; return `<div class="cls"><div class="cls-top"><input class="in" value="${esc(v.name)}" data-chg="vacLabel" data-id="${v.id}" aria-label="Label">
+        <button class="icon sm danger" data-act="delVac" data-id="${v.id}" aria-label="Delete">×</button></div>
+      <div class="cls-grid"><label class="f">First day<input class="in" type="date" value="${v.start}" data-chg="vacFrom" data-id="${v.id}"></label><label class="f">Last day<input class="in" type="date" value="${v.end}" data-chg="vacTo" data-id="${v.id}"></label></div>
+      <p class="muted" style="font-size:12px;margin:8px 0 0">${n} day${n === 1 ? "" : "s"} · absent goals:</p><div class="chips" style="margin-top:6px">${chips(v.absent, v.id)}</div></div>`; }).join("")}
+    ${!vs.length ? `<p class="empty">No time away scheduled.</p>` : ""}</section>`;
 }
 function calorieSetup() {
   const c = S.settings.calories, lim = c.limits || {};
@@ -1005,7 +1091,7 @@ function renderSetup() {
     <div class="toggle"><span>Workouts</span><button class="cb ${s.workout.enabled ? "on" : ""}" data-act="toggleGoal" data-g="workout">${s.workout.enabled ? "On" : "Off"}</button></div>
     <div class="toggle"><span>Calorie limit</span><button class="cb ${s.calories.enabled ? "on" : ""}" data-act="toggleGoal" data-g="calories">${s.calories.enabled ? "On" : "Off"}</button></div>
   </section>
-  ${s.workout.enabled ? workoutSetup() : ""}${s.calories.enabled ? calorieSetup() : ""}
+  ${s.workout.enabled ? workoutSetup() : ""}${s.calories.enabled ? calorieSetup() : ""}${vacationSetup()}
   <section class="panel"><div class="panel-head"><h2>Account and data</h2></div>
     <p class="muted" style="margin:0 0 10px">${store.mode === "firebase" ? `Signed in as ${esc(store.email())}. Your data syncs across devices.` : `Local mode (${LOCAL_WHY}): data lives only in this browser. Fill in firebase-config.js to sync across devices.`}</p>
     <label class="f" style="margin-bottom:10px">Send weekly summaries to<input class="in" type="email" value="${esc(s.summaryEmail || "")}" data-chg="summaryEmail" placeholder="you@example.com"></label>
@@ -1016,7 +1102,8 @@ function renderSetup() {
 /* ============================================================
    8. Actions
    ============================================================ */
-const dayEdit = fn => updateDay(S.selDate, d => { d.custom = true; fn(d); layoutPlan(d.snap.plan); });
+const dayEdit = (fn, wk = false) => updateDay(S.selDate, d => { if (wk) d.customWk = true; else d.custom = true; fn(d); layoutPlan(d.snap.plan, fixedBlocks(d.snap.workout, d.extra)); });
+function editVac(id, fn) { const vs = structuredClone(S.settings.vacations), v = vs.find(x => x.id === id); if (!v) return; fn(v); commitSettings({ vacations: vs }); }
 function editClass(id, fn) { const cl = structuredClone(S.settings.classes), c = cl.find(x => x.id === id); if (!c) return; fn(c); commitSettings({ classes: cl }); }
 function editWorkout(fn) { const w = structuredClone(S.settings.workout); w.plan = w.plan || {}; fn(w); commitSettings({ workout: w }); }
 function editCal(fn) { const c = structuredClone(S.settings.calories); c.limits = c.limits || {}; fn(c); commitSettings({ calories: c }); }
@@ -1059,7 +1146,7 @@ const ACT = {
     const src = S.selDate, to = $("#moveTo")?.value, v = dayView(src);
     if (!to || !v.snap.workout || v.moved || src < todayStr()) return;
     if (moveUsedInWeek(src)) { toast("You've already used this week's rest-day move"); return; }
-    const mv = { label: v.snap.workout.label, minutes: v.snap.workout.minutes };
+    const mv = { label: v.snap.workout.label, minutes: v.snap.workout.minutes, start: v.snap.workout.start ?? null };
     S.moveFor = null;
     await updateDay(src, d => { d.moved = { to, ...mv }; });
     await updateDay(to, d => { d.extra = { from: src, ...mv, done: false, note: "" }; });
@@ -1080,7 +1167,20 @@ const ACT = {
     const id = $("#dayAddSel")?.value, c = classById(id); if (!c) return;
     dayEdit(d => { d.snap.plan[id] = { name: c.name, color: c.color, goal: c.minutes > 0 ? c.minutes : 30, start: null, pin: false, exam: null, adjusted: false }; });
   },
-  dayReset: () => updateDay(S.selDate, d => { d.custom = false; d.snap.plan = makeSnap(S.selDate).plan; }),
+  dayReset: () => updateDay(S.selDate, d => { const ms = makeSnap(S.selDate); d.custom = false; d.customWk = false; d.snap.plan = ms.plan; d.snap.workout = ms.workout; }),
+  dayWkAdd: () => dayEdit(d => { d.snap.workout = { label: "Workout", minutes: 30, start: null }; }, true),
+  dayWkRemove: () => dayEdit(d => { d.snap.workout = false; }, true),
+  vacNewToggle: el => { S.vacNew[el.dataset.k] = !S.vacNew[el.dataset.k]; render(); },
+  vacToggle: el => editVac(el.dataset.id, v => { v.absent = v.absent || {}; v.absent[el.dataset.k] = !v.absent[el.dataset.k]; }),
+  addVac: () => {
+    const start = $("#vacStart").value, end = $("#vacEnd").value || start, name = $("#vacName").value.trim(), a = S.vacNew;
+    if (!start) { toast("Pick the first day"); return; }
+    if (end < start) { toast("The last day can't be before the first day"); return; }
+    if (!a.study && !a.workout && !a.cal) { toast("Choose at least one goal to be absent"); return; }
+    $("#vacName").value = ""; $("#vacStart").value = ""; $("#vacEnd").value = "";
+    commitSettings({ vacations: [...S.settings.vacations, { id: uid(), name: name || "Time away", start, end, absent: { ...a } }] });
+  },
+  delVac: el => commitSettings({ vacations: S.settings.vacations.filter(v => v.id !== el.dataset.id) }),
 
   toggleWorkout: () => updateDay(S.selDate, d => { d.workout.done = !d.workout.done; }),
   addCal: () => {
@@ -1114,12 +1214,12 @@ const ACT = {
   bulkPreset: el => { S.bulk[el.dataset.kind] = { weekdays: [1, 2, 3, 4, 5], weekend: [0, 6], all: [0, 1, 2, 3, 4, 5, 6], none: [] }[el.dataset.p]; render(); },
   bulkWkApply: () => {
     if (!needDays("wk")) return;
-    const days = S.bulk.wk, label = $("#bulkWkLabel").value.trim() || "Workout", minutes = Math.max(0, Math.round(+$("#bulkWkMin").value || 0));
+    const days = S.bulk.wk, start = $("#bulkWkStart").value || "", label = $("#bulkWkLabel").value.trim() || "Workout", minutes = Math.max(0, Math.round(+$("#bulkWkMin").value || 0));
     if (!minutes) { toast("Enter minutes (0 would make these rest days)"); return; }
-    editWorkout(w => days.forEach(d => { w.plan[d] = { label, minutes }; })); toast(`Workout set for ${days.length} day${days.length === 1 ? "" : "s"}`);
+    editWorkout(w => days.forEach(d => { w.plan[d] = { label, minutes, start }; })); toast(`Workout set for ${days.length} day${days.length === 1 ? "" : "s"}`);
   },
   bulkWkRest: () => { if (needDays("wk")) editWorkout(w => S.bulk.wk.forEach(d => { delete w.plan[d]; })); },
-  wkAdd: el => editWorkout(w => { w.plan[el.dataset.d] = { label: "Workout", minutes: 30 }; }),
+  wkAdd: el => editWorkout(w => { w.plan[el.dataset.d] = { label: "Workout", minutes: 30, start: "" }; }),
   wkRest: el => editWorkout(w => { delete w.plan[el.dataset.d]; }),
   bulkCalApply: () => {
     if (!needDays("cal")) return;
@@ -1170,6 +1270,12 @@ const CHG = {
   studyStart: el => commitSettings({ studyStart: el.value }),
   breakMin: el => commitSettings({ breakMin: Math.max(0, Math.round(+el.value || 0)) }),
   summaryEmail: el => { S.settings.summaryEmail = el.value.trim(); store.saveSettings({ summaryEmail: S.settings.summaryEmail }); },
+  wkStart: el => editWorkout(w => { if (w.plan[el.dataset.d]) w.plan[el.dataset.d].start = el.value; }),
+  dayWkMin: el => { const m = Math.max(0, Math.round(+el.value || 0)); dayEdit(d => { if (!d.snap.workout) return; if (m > 0) d.snap.workout.minutes = m; else d.snap.workout = false; }, true); },
+  dayWkStart: el => dayEdit(d => { if (d.snap.workout) d.snap.workout.start = hm(el.value); }, true),
+  vacLabel: el => editVac(el.dataset.id, v => { v.name = el.value.trim() || "Time away"; }),
+  vacFrom: el => editVac(el.dataset.id, v => { if (el.value) { v.start = el.value; if (v.end < v.start) v.end = v.start; } }),
+  vacTo: el => editVac(el.dataset.id, v => { if (el.value) { v.end = el.value; if (v.end < v.start) v.start = v.end; } }),
   wkLabel: el => editWorkout(w => { if (w.plan[el.dataset.d]) w.plan[el.dataset.d].label = el.value.trim() || "Workout"; }),
   wkMin: el => editWorkout(w => { const m = Math.max(0, Math.round(+el.value || 0)); if (!w.plan[el.dataset.d]) return; if (m > 0) w.plan[el.dataset.d].minutes = m; else delete w.plan[el.dataset.d]; }),
   calDay: el => editCal(c => { if (el.value === "") delete c.limits[el.dataset.d]; else c.limits[el.dataset.d] = Math.max(0, Math.round(+el.value || 0)); }),
