@@ -325,6 +325,13 @@ h1{overflow-wrap:anywhere}
 .segs .grp .fail{background:#E0605A}
 .segs .grp .open{background:#fff}
 .dayrow.cal2{grid-template-columns:40px 1fr 54px 32px}
+/* ---- v8: S / W / C labels on calendar bands ---- */
+.segs i{display:flex;align-items:flex-end;justify-content:center;position:relative}
+.segs em{font:800 9px/1 var(--display);font-style:normal;padding-bottom:3px;pointer-events:none;position:relative;z-index:1}
+.segs .ok em,.segs .fail em{color:#fff}
+.segs .open em{color:var(--muted)}
+.segs .grp{display:flex}
+.segs .grp em{position:absolute;left:0;right:0;bottom:0;text-align:center;color:var(--ink);text-shadow:0 0 3px #fff,0 0 3px #fff}
 </style>
 </head>
 <body>
@@ -891,6 +898,7 @@ const examNames = ds => S.settings.exams.filter(e => e.date === ds).map(e => e.n
 const movedChip = ds => { const d = S.days[ds]; if (d?.moved) return `<span class="chip rest">Workout moved to ${DOW[parse(d.moved.to).getDay()]}</span>`; if (d?.extra) return `<span class="chip">Moved from ${DOW[parse(d.extra.from).getDay()]}</span>`; return ""; };
 const vacChip = ds => { const v = vacationFor(ds); if (!v) return ""; const n = [v.absent.study && "study", v.absent.workout && "workout", v.absent.cal && "calories"].filter(Boolean); return n.length ? `<span class="chip rest">✈ Away: ${n.join(", ")}</span>` : ""; };
 const examChip = ds => { const n = examNames(ds); return n ? `<span class="chip exam">Exam: ${esc(n)}</span>` : ""; };
+const LETTER = { study: "S", workout: "W", cal: "C" };
 const SEGCOL = { ok: "#17A058", fail: "#E0605A", open: "#FFFFFF" };
 
 function dayCell(ds, n) {
@@ -899,7 +907,7 @@ function dayCell(ds, n) {
   if (before) cls = "before";
   else if (st.level === "na") cls = "na";
   else if (future) cls = "future";
-  else inner = `<span class="segs">${segs(ds).map(x => x.parts ? `<i class="grp">${x.parts.map(q => `<b class="${q}"></b>`).join("")}</i>` : `<i class="${x.state}"></i>`).join("")}</span>${st.level === "full" ? `<span class="ck">${CHECK}</span>` : ""}`;
+  else inner = `<span class="segs">${segs(ds).map(x => x.parts ? `<i class="grp">${x.parts.map(q => `<b class="${q}"></b>`).join("")}<em>${LETTER[x.k]}</em></i>` : `<i class="${x.state}"><em>${LETTER[x.k]}</em></i>`).join("")}</span>${st.level === "full" ? `<span class="ck">${CHECK}</span>` : ""}`;
   return `<button class="cell ${cls} ${ds === t ? "today" : ""} ${ex ? "exam" : ""} ${away ? "vac" : ""}" data-act="openDay" data-date="${ds}" aria-label="${longDate(ds)}${ex ? ", exam: " + esc(ex) : ""}">${inner}<span class="dn">${n}</span></button>`;
 }
 function sqCell(ds) {
@@ -950,7 +958,7 @@ function streakTiles() {
   return `<div class="tiles">${defs.map(([k, n]) => { const r = streak(k); return `<div class="tile ${r.cur >= 3 ? "hot" : ""}"><b>${r.cur}</b><span>${n} streak</span><i>best ${r.best}</i></div>`; }).join("")}</div>`;
 }
 const LEGEND = `<div class="legend"><span><i class="lg" style="background:var(--green)"></i>Met</span><span><i class="lg" style="background:#E0605A"></i>Missed</span><span><i class="lg" style="background:#fff"></i>Open</span><span><i class="lg" style="background:#D3DAE0"></i>Rest / no goal</span><span>◆ Exam</span><span>✈ Away</span></div>
-  <p class="muted" style="font-size:12px;margin:6px 0 0">Each day is split into one band per goal: study, workout, calories.</p>`;
+  <p class="muted" style="font-size:12px;margin:6px 0 0">Each day is split into one band per goal: S study, W workout, C calories.</p>`;
 
 function renderCalendar() {
   const c = S.cal, cur = parse(c.cursor), y = cur.getFullYear(), m = cur.getMonth();
