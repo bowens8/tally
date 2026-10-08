@@ -317,6 +317,14 @@ h1{overflow-wrap:anywhere}
 .wkrow .dn2{font:700 13px var(--display)}
 .row.study .rname{flex-wrap:wrap;gap:3px 8px}
 .row.study .rname .badge{margin-left:0;flex:none}
+/* ---- v7: split study band, calorie weekday toggles ---- */
+.segs .grp{flex:1;display:flex}
+.segs .grp b{flex:1;display:block}
+.segs .grp b+b{border-left:1px solid var(--bg)}
+.segs .grp .ok{background:var(--green)}
+.segs .grp .fail{background:#E0605A}
+.segs .grp .open{background:#fff}
+.dayrow.cal2{grid-template-columns:40px 1fr 54px 32px}
 </style>
 </head>
 <body>
@@ -438,9 +446,9 @@ const PLUS_STEPS = [{ within: 14, mode: "+", value: 15 }, { within: 7, mode: "+"
 const defaultSettings = () => ({
   classes: [], exams: [], weights: [], vacations: [], weightUnit: "lb", startDate: todayStr(),
   studyStart: "16:00", breakMin: 10, examBoost: true, summaryEmail: "",
-  study: { enabled: true },
+  study: { enabled: true, rule: "all", min: 1, required: [], split: false, onExamDay: true },
   workout: { enabled: true, plan: {} },
-  calories: { enabled: true, limit: 2200, limits: {} },
+  calories: { enabled: true, limit: 2200, limits: {}, off: {} },
   timer: null
 });
 function mergeSettings(r) {
@@ -448,7 +456,7 @@ function mergeSettings(r) {
   const wk = { ...d.workout, ...r.workout };
   if (!r.workout?.plan) { wk.plan = {}; (r.workout?.days || []).forEach(i => { wk.plan[i] = { label: "Workout", minutes: 30 }; }); }
   for (const k of Object.keys(wk.plan)) if (!(wk.plan[k]?.minutes > 0)) delete wk.plan[k];      // 0 minutes = no goal
-  const cal = { ...d.calories, ...r.calories }; cal.limits = cal.limits || {};
+  const cal = { ...d.calories, ...r.calories }; cal.limits = cal.limits || {}; cal.off = cal.off || {};
   const classes = (r.classes || []).map(c => ({ start: "", ...c }));
   const exams = r.exams || classes.filter(c => c.exam).map(c => ({ id: uid(), classId: c.id, name: `${c.name} exam`, date: c.exam, steps: structuredClone(STD_STEPS), score: null, max: 100 }));
   return { ...d, ...r, classes, exams, weights: r.weights || [], vacations: r.vacations || [], study: { ...d.study, ...r.study }, workout: wk, calories: cal };
@@ -502,7 +510,7 @@ function makeSnap(ds) {
   const wp = st.workout.plan?.[dow], lim = st.calories.limits?.[dow] ?? st.calories.limit;
   const workout = st.workout.enabled && wp && wp.minutes > 0 ? { label: wp.label, minutes: wp.minutes, start: hm(wp.start) } : false;
   layoutPlan(plan, fixedBlocks(workout));
-  return { plan, workout, cal: st.calories.enabled && lim > 0, limit: lim };
+  return { plan, workout, cal: st.calories.enabled && lim > 0 && !st.calories.off?.[dow], limit: lim };
 }
 const newDay = ds => ({ date: ds, snap: makeSnap(ds), custom: false, done: {}, sessions: [], workout: { done: false, note: "" }, cal: { entries: [], ok: false } });
 function vacationFor(ds) {
@@ -512,13 +520,18 @@ function vacationFor(ds) {
   hit.forEach(v => { for (const k in absent) if (v.absent?.[k]) absent[k] = true; });
   return { names: hit.map(v => v.name || "Away"), absent };
 }
+function examDayStudyOff(ds) {
+  return S.settings.exams.some(e => e.date === ds && (e.studyDay ?? S.settings.study.onExamDay) === false);
+}
 function dayView(ds) {
-  const d = S.days[ds], vac = vacationFor(ds);
+  const d = S.days[ds], vac = vacationFor(ds), examOff = examDayStudyOff(ds);
   let snap = d?.snap || makeSnap(ds);
   if (d?.snap && ds >= todayStr()) { snap = { ...snap, plan: structuredClone(snap.plan) }; layoutPlan(snap.plan, fixedBlocks(snap.workout, d.extra)); }
   if (vac) snap = { ...snap, plan: vac.absent.study ? {} : snap.plan, workout: vac.absent.workout ? false : snap.workout, cal: vac.absent.cal ? false : snap.cal };
+  if (examOff) snap = { ...snap, plan: {} };
+  if (d?.calOff) snap = { ...snap, cal: false };
   return {
-    snap, vac, moved: d?.moved || null, extra: d?.extra || null, done: d?.done || {}, sessions: d?.sessions || [],
+    snap, vac, examDay: examOff, calOff: d?.calOff === true, moved: d?.moved || null, extra: d?.extra || null, done: d?.done || {}, sessions: d?.sessions || [],
     workout: d?.workout || { done: false, note: "" }, cal: d?.cal || { entries: [], ok: false }, custom: !!(d?.custom || d?.customWk), off: d?.off === true
   };
 }
@@ -534,11 +547,30 @@ function workoutItems(v) {
 }
 const calTotal = v => v.cal.entries.reduce((a, e) => a + e.kcal, 0);
 const loggedMin = (v, id) => v.sessions.filter(s => s.classId === id).reduce((a, s) => a + s.sec, 0) / 60;
+/* Does the day's study goal count as met? Depends on the rule in Setup. */
+function studyResult(v) {
+  const ids = Object.keys(v.snap.plan), st = S.settings.study, done = ids.filter(id => v.done[id]);
+  if (!ids.length) return { met: null, done: 0, total: 0 };
+  let met;
+  if (st.rule === "count") met = done.length >= Math.min(Math.max(1, st.min || 1), ids.length);
+  else if (st.rule === "which") {
+    const req = ids.filter(id => (st.required || []).includes(id));
+    if (!req.length) return { met: null, done: done.length, total: ids.length };
+    met = req.every(id => v.done[id]);
+  } else met = done.length === ids.length;
+  return { met, done: done.length, total: ids.length };
+}
+function ruleText(v) {
+  const ids = Object.keys(v.snap.plan), st = S.settings.study; if (!ids.length) return "";
+  if (st.rule === "count") return `needs ${Math.min(Math.max(1, st.min || 1), ids.length)} of ${ids.length} classes`;
+  if (st.rule === "which") { const r = ids.filter(id => (st.required || []).includes(id)); return r.length ? `required: ${r.map(id => v.snap.plan[id].name).join(", ")}` : "no required class today"; }
+  return "";
+}
 function status(ds) {
   const v = dayView(ds);
   if (v.off) return { study: null, workout: null, cal: null, level: "na", done: 0, total: 0 };
-  const ids = Object.keys(v.snap.plan), wi = workoutItems(v);
-  const study = !ids.length ? null : ids.every(id => v.done[id]);
+  const wi = workoutItems(v), sr = studyResult(v);
+  const study = sr.met;
   const workout = wi.length ? wi.every(i => i.done) : null;
   const cal = !v.snap.cal ? null : (v.cal.entries.length ? calTotal(v) <= v.snap.limit : !!v.cal.ok);
   const arr = [study, workout, cal].filter(x => x !== null);
@@ -551,7 +583,12 @@ function segs(ds) {
   for (const k of ["study", "workout", "cal"]) {
     if (st[k] === null) continue;
     const overNow = k === "cal" && v.cal.entries.length && calTotal(v) > v.snap.limit;
-    out.push({ k, state: st[k] ? "ok" : ds < t ? "fail" : ds === t && overNow ? "fail" : "open" });
+    const seg = { k, state: st[k] ? "ok" : ds < t ? "fail" : ds === t && overNow ? "fail" : "open" };
+    if (k === "study") {
+      const ids = sortedIds(v.snap.plan), r = studyResult(v); seg.counts = { done: r.done, total: r.total };
+      if (S.settings.study.split && ids.length > 1) seg.parts = ids.map(id => v.done[id] ? "ok" : st.study ? "open" : ds < t ? "fail" : "open");
+    }
+    out.push(seg);
   }
   return out;
 }
@@ -662,8 +699,9 @@ function render() {
 }
 
 /* ---------- Today ---------- */
-function blockLine(p) {
+function blockLine(p, extra = "") {
   let t = p.start != null ? `${fmtTime(p.start)} – ${fmtTime(p.start + p.goal)}` : "";
+  if (extra) t += `${t ? " · " : ""}${extra}`;
   if (p.adjusted) t += `${t ? " · " : ""}goal adjusted for exam`;
   return t ? `<div class="blk">${t}</div>` : "";
 }
@@ -744,15 +782,16 @@ function studyPanel(ds, v) {
       <button class="icon sm danger" data-act="delSession" data-id="${x.id}" aria-label="Delete session">×</button></div>`;
   }).join("")}</details>` : "";
   let h = `<section class="panel"><div class="panel-head"><h2>Study</h2></div>`;
+  if (v.examDay) return h + `<p class="empty">Exam day: study goals are off today. Time you log still gets recorded.</p>${sessionList}</section>`;
   if (v.vac?.absent.study) return h + `<p class="empty">Away (${esc(v.vac.names.join(", "))}): study isn't counted on this day. Time you log still gets recorded.</p>${sessionList}</section>`;
   if (!s.classes.length) return h + `<p class="empty">Add your classes in Setup and Tally builds a daily study plan. You can still use the timer above for general study.</p>${sessionList}</section>`;
-  h += `<p class="muted" style="margin:-4px 0 8px;font-size:13px">${fmtMin(all)} studied${ids.length ? ` · ${fmtMin(planMin)} planned` : ""}</p>`;
+  h += `<p class="muted" style="margin:-4px 0 8px;font-size:13px">${fmtMin(all)} studied${ids.length ? ` · ${fmtMin(planMin)} planned` : ""}${ruleText(v) ? ` · ${ruleText(v)}` : ""}</p>`;
   if (!ids.length) h += `<p class="empty">No classes scheduled for ${DOW[parse(ds).getDay()]}. Use "Edit this day" in the Schedule to add one just for this day.</p>`;
   h += ids.map(id => {
-    const p = plan[id], logged = loggedMin(v, id), pct = Math.min(100, logged / p.goal * 100), done = !!v.done[id];
+    const p = plan[id], logged = loggedMin(v, id), pct = Math.min(100, logged / p.goal * 100), done = !!v.done[id], req = s.study.rule === "which" && (s.study.required || []).includes(id);
     return `<div class="row study ${done ? "done" : ""}">
       <button class="check ${done ? "on" : ""}" data-act="toggleClass" data-id="${id}" ${isFuture() ? "disabled" : ""} aria-pressed="${done}" aria-label="Mark ${esc(p.name)} done">${CHECK}</button>
-      <div class="rowmain"><div class="rname"><i class="dot" style="background:${p.color}"></i><span>${esc(p.name)}</span>${examBadge(p, ds)}</div>${blockLine(p)}
+      <div class="rowmain"><div class="rname"><i class="dot" style="background:${p.color}"></i><span>${esc(p.name)}</span>${examBadge(p, ds)}</div>${blockLine(p, req ? "required" : "")}
         <div class="bar"><span style="width:${pct}%;background:${p.color}"></span></div>
         <div class="rmeta">${fmtMin(logged)} / ${fmtMin(p.goal)}${logged > p.goal ? ` <b style="color:var(--green)">· +${fmtMin(logged - p.goal)} over</b>` : ""}</div></div>
       <button class="icon sm" data-act="playClass" data-id="${id}" ${t0 || isFuture() ? "disabled" : ""} aria-label="Start timer for ${esc(p.name)}">▶</button>
@@ -796,8 +835,8 @@ function workoutPanel(v) {
 
 function caloriePanel(v) {
   if (!S.settings.calories.enabled) return "";
-  if (!v.snap.cal) return `<section class="panel"><div class="panel-head"><h2>Calories</h2></div><p class="empty">${v.vac?.absent.cal ? `Away (${esc(v.vac.names.join(", "))}): calories aren't counted on this day.` : "No calorie limit for this day."}</p></section>`;
-  let h = `<section class="panel"><div class="panel-head"><h2>Calories</h2></div>`;
+  if (!v.snap.cal) return `<section class="panel"><div class="panel-head"><h2>Calories</h2>${v.calOff ? `<button class="mini" data-act="toggleCalOff">Turn back on</button>` : ""}</div><p class="empty">${v.vac?.absent.cal ? `Away (${esc(v.vac.names.join(", "))}): calories aren't counted on this day.` : v.calOff ? "Calorie goal is turned off for this day." : "No calorie goal for this day."}</p></section>`;
+  let h = `<section class="panel"><div class="panel-head"><h2>Calories</h2><button class="mini" data-act="toggleCalOff">Turn off for this day</button></div>`;
   if (isFuture()) return h + `<p class="empty">Limit for this day: ${v.snap.limit} kcal. Logging opens on the day.</p></section>`;
   const tot = calTotal(v), lim = v.snap.limit, over = tot > lim, pct = Math.min(100, tot / lim * 100);
   const foot = v.cal.entries.length
@@ -860,7 +899,7 @@ function dayCell(ds, n) {
   if (before) cls = "before";
   else if (st.level === "na") cls = "na";
   else if (future) cls = "future";
-  else inner = `<span class="segs">${segs(ds).map(x => `<i class="${x.state}"></i>`).join("")}</span>${st.level === "full" ? `<span class="ck">${CHECK}</span>` : ""}`;
+  else inner = `<span class="segs">${segs(ds).map(x => x.parts ? `<i class="grp">${x.parts.map(q => `<b class="${q}"></b>`).join("")}</i>` : `<i class="${x.state}"></i>`).join("")}</span>${st.level === "full" ? `<span class="ck">${CHECK}</span>` : ""}`;
   return `<button class="cell ${cls} ${ds === t ? "today" : ""} ${ex ? "exam" : ""} ${away ? "vac" : ""}" data-act="openDay" data-date="${ds}" aria-label="${longDate(ds)}${ex ? ", exam: " + esc(ex) : ""}">${inner}<span class="dn">${n}</span></button>`;
 }
 function sqCell(ds) {
@@ -868,8 +907,10 @@ function sqCell(ds) {
   if (ds < startDateStr()) return `<i class="sq before"></i>`;
   if (st.level === "na") return `<i class="sq na"></i>`;
   if (ds > t) return `<i class="sq future"></i>`;
-  const sg = segs(ds), w = 100 / sg.length;
-  const grad = sg.length === 1 ? SEGCOL[sg[0].state] : `linear-gradient(to right, ${sg.map((x, i) => `${SEGCOL[x.state]} ${i * w}% ${(i + 1) * w}%`).join(", ")})`;
+  const sg = segs(ds), flat = [];
+  for (const x of sg) { if (x.parts) x.parts.forEach(q => flat.push({ state: q, w: 100 / sg.length / x.parts.length })); else flat.push({ state: x.state, w: 100 / sg.length }); }
+  let acc = 0;
+  const grad = flat.length === 1 ? SEGCOL[flat[0].state] : `linear-gradient(to right, ${flat.map(x => { const a = acc; acc += x.w; return `${SEGCOL[x.state]} ${a}% ${acc}%`; }).join(", ")})`;
   return `<i class="sq" style="background:${grad}"></i>`;
 }
 function monthDates(y, m) { const n = new Date(y, m + 1, 0).getDate(); return Array.from({ length: n }, (_, i) => dstr(new Date(y, m, i + 1))); }
@@ -919,7 +960,7 @@ function renderCalendar() {
     const t = todayStr(), s0 = startDateStr();
     body = dates.map(ds => {
       const st = status(ds), future = ds > t, sg = segs(ds), names = { study: "Study", workout: "Workout", cal: "Calories" };
-      const chips = (future || ds < s0) ? `<span class="chip">${future ? "Upcoming" : "Before start"}</span>` : st.level === "na" ? `<span class="chip rest">Rest / no goals</span>` : sg.map(x => `<span class="chip ${x.state}">${names[x.k]}</span>`).join("");
+      const chips = (future || ds < s0) ? `<span class="chip">${future ? "Upcoming" : "Before start"}</span>` : st.level === "na" ? `<span class="chip rest">Rest / no goals</span>` : sg.map(x => `<span class="chip ${x.state}">${x.k === "study" && x.counts && x.counts.total > 1 ? `Study ${x.counts.done}/${x.counts.total}` : names[x.k]}</span>`).join("");
       return `<button class="wrow ${!future && st.level === "full" ? "full" : ""}" data-act="openDay" data-date="${ds}">
         <div class="wd"><b>${DOW[parse(ds).getDay()]}</b><span>${shortDate(ds)}</span></div><div class="wchips">${chips}${examChip(ds)}${movedChip(ds)}${vacChip(ds)}</div>
         ${!future && st.level === "full" ? `<span class="wcheck">${CHECK}</span>` : ""}</button>`;
@@ -969,6 +1010,7 @@ function examCard(ex) {
     ${st ? `<div class="exstats"><div class="stat"><b>${fmtMin(st.min)}</b>studied for this exam</div><div class="stat"><b>${st.days}</b>days studied</div><div class="stat"><b>${st.days ? fmtMin(st.min / st.days) : "0m"}</b>avg per study day</div><div class="stat"><b>${st.sessions}</b>sessions</div></div>
       <p class="muted" style="font-size:12px;margin:6px 0 0">Counts ${esc(c?.name || "class")} study ${st.prev ? "since " + shortDate(st.prev) : "so far"}, including time over your daily goal.</p>` : `<p class="muted" style="font-size:12px;margin:6px 0 0">Pick a class on this exam to see how long you studied for it.</p>`}
     <div class="scorerow"><span class="muted">Score</span><input class="in" type="number" step="any" min="0" inputmode="decimal" value="${ex.score ?? ""}" placeholder="—" data-chg="examScore" data-id="${ex.id}" aria-label="Score"><span class="muted">out of</span><input class="in" type="number" step="any" min="0" value="${ex.max ?? 100}" data-chg="examMax" data-id="${ex.id}" aria-label="Points possible">${pct != null ? `<span class="pct">${pct}%</span>` : ""}</div>
+    <label class="f" style="margin-top:10px">Study goals on exam day<select class="in" data-chg="examStudyDay" data-id="${ex.id}"><option value="" ${ex.studyDay == null ? "selected" : ""}>Use my default (${S.settings.study.onExamDay !== false ? "on" : "off"})</option><option value="on" ${ex.studyDay === true ? "selected" : ""}>On for this exam</option><option value="off" ${ex.studyDay === false ? "selected" : ""}>Off for this exam</option></select></label>
     <details><summary>Study ramp: ${steps.length ? steps.slice().sort((a, b) => b.within - a.within).map(stepText).join(", ") : "none"}</summary>
       ${steps.map((s, i) => `<div class="steprow">Within <input class="in" type="number" min="0" value="${s.within}" data-chg="stepWithin" data-id="${ex.id}" data-i="${i}"> days
         <select class="in" data-chg="stepMode" data-id="${ex.id}" data-i="${i}"><option value="x" ${s.mode === "x" ? "selected" : ""}>multiply by</option><option value="+" ${s.mode === "+" ? "selected" : ""}>add minutes</option></select>
@@ -1056,17 +1098,33 @@ function vacationSetup() {
     ${!vs.length ? `<p class="empty">No time away scheduled.</p>` : ""}</section>`;
 }
 function calorieSetup() {
-  const c = S.settings.calories, lim = c.limits || {};
+  const c = S.settings.calories, lim = c.limits || {}, off = c.off || {};
   return `<section class="panel"><div class="panel-head"><h2>Calorie limits</h2></div>
-    <p class="muted" style="margin:-4px 0 10px;font-size:13px">A limit of 0 means no calorie goal that day (gray on the calendar).</p>
+    <p class="muted" style="margin:-4px 0 10px;font-size:13px">Switch a weekday Off to have no calorie goal on those days (gray on the calendar). For a single date, use "Turn off for this day" on the Today page. A limit of 0 also means no goal.</p>
     <label class="f">Default daily limit (kcal)<input class="in" type="number" min="0" step="50" value="${c.limit}" data-chg="calLimit"></label>
-    <div class="bulk" style="margin-top:12px"><b style="font:700 14px var(--display)">Set a different limit for several days</b>
-      <div class="addrow"><input class="in" id="bulkCal" data-keep inputmode="numeric" placeholder="kcal (0 = no goal)"></div>
+    <div class="bulk" style="margin-top:12px"><b style="font:700 14px var(--display)">Several days at once</b>
+      <div class="addrow"><input class="in" id="bulkCal" data-keep inputmode="numeric" placeholder="kcal limit for these days"></div>
       ${bulkChips("cal")}
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn sm" data-act="bulkCalApply">Apply to selected days</button><button class="btn alt sm" data-act="bulkCalClear">Back to default</button></div></div>
-    ${DOW.map((n, i) => `<div class="dayrow cal"><span class="dn2">${n}</span>
-      <input class="in" type="number" min="0" step="50" value="${lim[i] ?? ""}" placeholder="${c.limit} (default)" data-chg="calDay" data-d="${i}" aria-label="${n} calorie limit">
-      ${lim[i] != null ? `<button class="icon sm danger" data-act="calReset" data-d="${i}" aria-label="Reset ${n} to default">×</button>` : "<span></span>"}</div>`).join("")}</section>`;
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn sm" data-act="bulkCalApply">Set limit</button><button class="btn alt sm" data-act="bulkCalClear">Back to default</button><button class="btn alt sm" data-act="bulkCalOff">Turn goal off</button><button class="btn alt sm" data-act="bulkCalOn">Turn goal on</button></div></div>
+    ${DOW.map((n, i) => `<div class="dayrow cal2"><span class="dn2">${n}</span>
+      <input class="in" type="number" min="0" step="50" value="${lim[i] ?? ""}" placeholder="${c.limit} (default)" ${off[i] ? "disabled" : ""} data-chg="calDay" data-d="${i}" aria-label="${n} calorie limit">
+      <button class="cb ${off[i] ? "" : "on"}" data-act="calDayToggle" data-d="${i}" aria-pressed="${!off[i]}" aria-label="${n} calorie goal ${off[i] ? "off" : "on"}">${off[i] ? "Off" : "On"}</button>
+      ${lim[i] != null && !off[i] ? `<button class="icon sm danger" data-act="calReset" data-d="${i}" aria-label="Reset ${n} to default">×</button>` : "<span></span>"}</div>`).join("")}</section>`;
+}
+function studyRuleSetup() {
+  const s = S.settings, st = s.study, modes = [["all", "All classes"], ["count", "At least N classes"], ["which", "Required classes"]];
+  const yn = on => on ? "On" : "Off";
+  return `<section class="panel"><div class="panel-head"><h2>Study goal rules</h2></div>
+    <p class="muted" style="margin:-4px 0 10px;font-size:13px">When does a day's study goal count as met?</p>
+    <div class="chips" style="margin-top:0">${modes.map(([k, n]) => `<button class="cb ${st.rule === k ? "on" : ""}" data-act="studyRule" data-r="${k}" aria-pressed="${st.rule === k}">${n}</button>`).join("")}</div>
+    ${st.rule === "count" ? `<label class="f" style="margin-top:12px">How many classes must be done<input class="in" type="number" min="1" value="${st.min || 1}" data-chg="studyMin"></label>
+      <p class="muted" style="font-size:12px;margin:6px 0 0">If fewer classes are scheduled that day, all of them are needed.</p>` : ""}
+    ${st.rule === "which" ? `<p class="muted" style="font-size:13px;margin:12px 0 6px">Tap the classes that must be done. The rest are optional. A day with none of these scheduled has no study goal.</p>
+      <div class="chips" style="margin-top:0">${s.classes.length ? s.classes.map(c => `<button class="cb ${(st.required || []).includes(c.id) ? "on" : ""}" data-act="reqToggle" data-id="${c.id}" aria-pressed="${(st.required || []).includes(c.id)}">${esc(c.name)}</button>`).join("") : `<span class="muted">Add classes first.</span>`}</div>` : ""}
+    <div class="toggle" style="margin-top:12px"><span>Split the study box on the calendar by class</span><button class="cb ${st.split ? "on" : ""}" data-act="toggleSplit">${yn(st.split)}</button></div>
+    <p class="muted" style="font-size:12px;margin:0">Each day's study band is divided into one piece per class, so you can see which are done.</p>
+    <div class="toggle"><span>Study goals on exam days</span><button class="cb ${st.onExamDay !== false ? "on" : ""}" data-act="toggleExamDay">${yn(st.onExamDay !== false)}</button></div>
+    <p class="muted" style="font-size:12px;margin:0">Off means no study goal on the day of an exam. You can override this for a single exam on the Progress page.</p></section>`;
 }
 function renderSetup() {
   const s = S.settings;
@@ -1089,6 +1147,7 @@ function renderSetup() {
     <p class="muted" style="font-size:13px;margin:8px 0 0">Classes without their own start time are stacked in your list order from this time. Classes with a start time stay put. Clear the time to hide the schedule.</p>
     <div class="toggle" style="margin-top:8px"><span>Raise goals before exams</span><button class="cb ${s.examBoost !== false ? "on" : ""}" data-act="toggleExamBoost">${s.examBoost !== false ? "On" : "Off"}</button></div>
     <p class="muted" style="font-size:13px;margin:0">Add exams and shape their study ramps on the Progress page.</p></section>
+  ${studyRuleSetup()}
   <section class="panel"><div class="panel-head"><h2>Goals</h2></div>
     <div class="toggle"><span>Study goals</span><button class="cb ${s.study.enabled ? "on" : ""}" data-act="toggleGoal" data-g="study">${s.study.enabled ? "On" : "Off"}</button></div>
     <div class="toggle"><span>Workouts</span><button class="cb ${s.workout.enabled ? "on" : ""}" data-act="toggleGoal" data-g="workout">${s.workout.enabled ? "On" : "Off"}</button></div>
@@ -1149,6 +1208,14 @@ const ACT = {
     updateDay(ds, d => { if (on) d.off = true; else delete d.off; });
     toast(on ? "Goals turned off for this day" : "Goals turned back on");
   },
+  studyRule: el => commitSettings({ study: { ...S.settings.study, rule: el.dataset.r } }),
+  reqToggle: el => { const r = S.settings.study.required || [], id = el.dataset.id; commitSettings({ study: { ...S.settings.study, required: r.includes(id) ? r.filter(x => x !== id) : [...r, id] } }); },
+  toggleSplit: () => commitSettings({ study: { ...S.settings.study, split: !S.settings.study.split } }),
+  toggleExamDay: () => commitSettings({ study: { ...S.settings.study, onExamDay: S.settings.study.onExamDay === false } }),
+  calDayToggle: el => editCal(c => { c.off = c.off || {}; if (c.off[el.dataset.d]) delete c.off[el.dataset.d]; else c.off[el.dataset.d] = true; }),
+  bulkCalOff: () => { if (needDays("cal")) editCal(c => { c.off = c.off || {}; S.bulk.cal.forEach(d => { c.off[d] = true; }); }); },
+  bulkCalOn: () => { if (needDays("cal")) editCal(c => { c.off = c.off || {}; S.bulk.cal.forEach(d => { delete c.off[d]; }); }); },
+  toggleCalOff: () => updateDay(S.selDate, d => { if (d.calOff) delete d.calOff; else d.calOff = true; }),
   openMove: () => { S.moveFor = S.selDate; render(); },
   cancelMove: () => { S.moveFor = null; render(); },
   confirmMove: async () => {
@@ -1291,6 +1358,8 @@ const CHG = {
   calLimit: el => commitSettings({ calories: { ...S.settings.calories, limit: Math.max(0, Math.round(+el.value || 0)) } }),
   dayMin: el => { const m = Math.max(0, Math.round(+el.value || 0)); dayEdit(d => { if (!d.snap.plan[el.dataset.id]) return; if (m > 0) d.snap.plan[el.dataset.id].goal = m; else delete d.snap.plan[el.dataset.id]; }); },
   dayStart: el => dayEdit(d => { const p = d.snap.plan[el.dataset.id]; if (!p) return; const m = hm(el.value); p.pin = m != null; p.start = m; }),
+  studyMin: el => commitSettings({ study: { ...S.settings.study, min: Math.max(1, Math.round(+el.value || 1)) } }),
+  examStudyDay: el => editExam(el.dataset.id, e => { if (el.value === "on") e.studyDay = true; else if (el.value === "off") e.studyDay = false; else delete e.studyDay; }),
   examName: el => editExam(el.dataset.id, e => { e.name = el.value.trim() || e.name; }),
   examScore: el => editExam(el.dataset.id, e => { e.score = el.value === "" ? null : num(el.value); }),
   examMax: el => editExam(el.dataset.id, e => { const m = num(el.value); e.max = m > 0 ? m : 100; }),
