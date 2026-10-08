@@ -332,6 +332,20 @@ h1{overflow-wrap:anywhere}
 .segs .open em{color:var(--muted)}
 .segs .grp{display:flex}
 .segs .grp em{position:absolute;left:0;right:0;bottom:0;text-align:center;color:var(--ink);text-shadow:0 0 3px #fff,0 0 3px #fff}
+/* ---- v9: calmer day cells: number + markers in a header strip, bands below ---- */
+.cell{display:flex;flex-direction:column;aspect-ratio:1/1.22;padding:0;overflow:hidden}
+.cell .chead{flex:none;display:flex;justify-content:space-between;align-items:center;padding:4px 5px 3px;min-height:19px}
+.cell .dn{position:static;background:none;border-radius:0;padding:0;line-height:1;font:700 11px var(--display);color:var(--ink);z-index:auto}
+.cell .mk{display:flex;gap:2px;align-items:center;line-height:1}
+.cell .mk i{font-style:normal;font-size:8px;color:#5E6B77}
+.cell .segs{position:static;flex:1;display:flex;min-height:0}
+.cell.exam::after,.cell.vac::before,.cell .ck{content:none!important;display:none}
+.cell.full{background:var(--green);border-color:var(--green)}
+.cell.full .dn,.cell.full .mk i{color:#fff}
+.cell.full .segs i+i{border-left-color:rgba(255,255,255,.4)}
+.cell.na .dn,.cell.future .dn,.cell.before .dn{color:#7C8894}
+.cell.today .dn{text-decoration:underline;text-underline-offset:2px}
+.segs em{font-size:8px;opacity:.92}
 </style>
 </head>
 <body>
@@ -907,8 +921,12 @@ function dayCell(ds, n) {
   if (before) cls = "before";
   else if (st.level === "na") cls = "na";
   else if (future) cls = "future";
-  else inner = `<span class="segs">${segs(ds).map(x => x.parts ? `<i class="grp">${x.parts.map(q => `<b class="${q}"></b>`).join("")}<em>${LETTER[x.k]}</em></i>` : `<i class="${x.state}"><em>${LETTER[x.k]}</em></i>`).join("")}</span>${st.level === "full" ? `<span class="ck">${CHECK}</span>` : ""}`;
-  return `<button class="cell ${cls} ${ds === t ? "today" : ""} ${ex ? "exam" : ""} ${away ? "vac" : ""}" data-act="openDay" data-date="${ds}" aria-label="${longDate(ds)}${ex ? ", exam: " + esc(ex) : ""}">${inner}<span class="dn">${n}</span></button>`;
+  else {
+    cls = st.level === "full" ? "full" : "";
+    inner = `<span class="segs">${segs(ds).map(x => x.parts ? `<i class="grp">${x.parts.map(q => `<b class="${q}"></b>`).join("")}<em>${LETTER[x.k]}</em></i>` : `<i class="${x.state}"><em>${LETTER[x.k]}</em></i>`).join("")}</span>`;
+  }
+  const mk = `${ex ? `<i class="mk-ex" title="Exam">◆</i>` : ""}${away ? `<i class="mk-away" title="Away">✈</i>` : ""}`;
+  return `<button class="cell ${cls} ${ds === t ? "today" : ""} ${ex ? "exam" : ""} ${away ? "vac" : ""}" data-act="openDay" data-date="${ds}" aria-label="${longDate(ds)}${ex ? ", exam: " + esc(ex) : ""}${away ? ", away" : ""}"><span class="chead"><span class="dn">${n}</span><span class="mk">${mk}</span></span>${inner}</button>`;
 }
 function sqCell(ds) {
   const t = todayStr(), st = status(ds);
@@ -1000,7 +1018,7 @@ function renderCalendar() {
     body = g + `</div>` + LEGEND;
   }
   const ps = periodStats(dates);
-  return `<h1>Calendar</h1><p class="sub">Every green check means every goal that day was met.</p><div style="margin-top:14px">${streakTiles()}</div>
+  return `<h1>Calendar</h1><p class="sub">Every fully green day means every goal that day was met.</p><div style="margin-top:14px">${streakTiles()}</div>
     <div class="calbar"><div class="seg" role="group" aria-label="Zoom">${["week", "month", "year"].map(k => `<button class="${c.mode === k ? "on" : ""}" data-act="calMode" data-mode="${k}">${k[0].toUpperCase() + k.slice(1)}</button>`).join("")}</div>
       <div class="calnav"><button class="icon" data-act="calPrev" aria-label="Previous">‹</button><div class="caltitle">${title}</div><button class="icon" data-act="calNext" aria-label="Next">›</button></div></div>
     <div class="calstat"><b>${ps.full}</b> of ${ps.tracked} tracked days with all goals met</div>${body}`;
